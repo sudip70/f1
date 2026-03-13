@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F1. Analytics — About the API</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">F1<span class="nav-dot">.</span></a>
+      <div class="nav-page-links">
+        <a href="index.html" class="nav-page-link">Analytics</a>
+        <a href="about.html" class="nav-page-link">About</a>
+        <a href="about-api.html" class="nav-page-link active">About API</a>
+      </div>
+      <div class="nav-controls">
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
+          <span class="theme-icon-light">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+          </span>
+          <span class="theme-icon-dark">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+
+    <div class="page-hero">
+      <p class="eyebrow">Data Sources</p>
+      <h1 class="page-title">About the <em>APIs</em></h1>
+      <p class="page-subtitle">This dashboard is powered by two free, open, no-auth public APIs. Here's what each one does, how they're called, and the data model behind the scenes.</p>
+    </div>
+
+    <!-- Jolpica -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Source 01</p>
+        <a href="https://api.jolpi.ca" target="_blank" rel="noopener" class="about-link" style="margin-top:6px">jolpi.ca →</a>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">Jolpica F1 <em>API</em></h2>
+        <p class="about-body">Jolpica is an open-source API that maintains backwards compatibility with the now-deprecated Ergast API. It covers every Formula 1 season from 1950 onwards — race results, qualifying, driver and constructor standings, lap times, pit stops, and more. No account or API key required.</p>
+
+        <div class="api-meta-row">
+          <div class="api-meta"><span class="api-meta-label">Base URL</span><code class="api-meta-val">https://api.jolpi.ca/ergast/f1</code></div>
+          <div class="api-meta"><span class="api-meta-label">Auth</span><code class="api-meta-val">None</code></div>
+          <div class="api-meta"><span class="api-meta-label">Rate limit</span><code class="api-meta-val">200 req / hour</code></div>
+          <div class="api-meta"><span class="api-meta-label">Format</span><code class="api-meta-val">JSON</code></div>
+          <div class="api-meta"><span class="api-meta-label">Coverage</span><code class="api-meta-val">1950 → present</code></div>
+          <div class="api-meta"><span class="api-meta-label">Page size</span><code class="api-meta-val">30 rows (hard cap)</code></div>
+        </div>
+
+        <h3 class="about-subheading">Endpoints used</h3>
+
+        <div class="endpoint-list">
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/{year}/results/?limit=30&offset=0</code>
+              <p class="endpoint-desc">Race results for every round — paginated. Each page returns up to 30 driver-result rows (not races). A 24-race season has ~480 rows (24 × 20 drivers), requiring 16 paginated requests merged by round number.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/{year}/driverstandings/</code>
+              <p class="endpoint-desc">Final driver championship standings — position, points, wins, nationality, and team for every classified driver.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/{year}/constructorstandings/</code>
+              <p class="endpoint-desc">Final constructor championship standings — position, points, and wins for each team.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/{year}/qualifying/?limit=30&offset=0</code>
+              <p class="endpoint-desc">Qualifying results per round — Q1, Q2, Q3 times and grid positions. Also paginated by driver-result row.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <p class="callout-title">Pagination note</p>
+          <p class="callout-body">The <code>limit</code> parameter is ignored for values above 30 — Jolpica always returns a maximum of 30 rows per page regardless. <code>MRData.total</code> tells you the total row count, not the race count. This dashboard paginates through all pages in parallel and merges results by <code>round</code> number to reconstruct complete race objects.</p>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
+
+    <!-- OpenF1 -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Source 02</p>
+        <a href="https://openf1.org" target="_blank" rel="noopener" class="about-link" style="margin-top:6px">openf1.org →</a>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">OpenF1 <em>API</em></h2>
+        <p class="about-body">OpenF1 provides real-time and historical session-level data from the official F1 timing feed. It includes granular lap-by-lap data, car telemetry (throttle, brake, DRS, speed), weather, tyre compounds, race control messages, and pit stop data. No authentication required.</p>
+
+        <div class="api-meta-row">
+          <div class="api-meta"><span class="api-meta-label">Base URL</span><code class="api-meta-val">https://api.openf1.org/v1</code></div>
+          <div class="api-meta"><span class="api-meta-label">Auth</span><code class="api-meta-val">None</code></div>
+          <div class="api-meta"><span class="api-meta-label">Rate limit</span><code class="api-meta-val">Generous (no hard limit published)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Format</span><code class="api-meta-val">JSON</code></div>
+          <div class="api-meta"><span class="api-meta-label">Coverage</span><code class="api-meta-val">2023 → present</code></div>
+        </div>
+
+        <h3 class="about-subheading">Endpoints used</h3>
+
+        <div class="endpoint-list">
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/sessions?year={year}&session_name=Race</code>
+              <p class="endpoint-desc">Returns all race sessions for the given year, each with a unique <code>session_key</code>. The last session in the list is used as the reference for pit stop data.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method">GET</div>
+            <div>
+              <code class="endpoint-path">/pit?session_key={key}</code>
+              <p class="endpoint-desc">All pit stop events for a session — driver number, lap number, and duration in seconds. Used to compute total stops, average and fastest durations, and max stops per driver.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <p class="callout-title">Coverage note</p>
+          <p class="callout-body">OpenF1 data is available from the 2023 season onwards. For seasons before 2023 the pit stop block in the dashboard will show "no data" — this is expected. The Jolpica results data (race winner, lap counts, fastest lap) still loads normally for all seasons back to 2000.</p>
+        </div>
+
+        <h3 class="about-subheading">Available but not yet used</h3>
+        <p class="about-body" style="margin-bottom:16px">OpenF1 exposes much richer data that could extend this dashboard further:</p>
+        <div class="tag-row">
+          <span class="tag">Car telemetry</span>
+          <span class="tag">Lap times</span>
+          <span class="tag">Tyre compounds</span>
+          <span class="tag">Weather</span>
+          <span class="tag">Race control messages</span>
+          <span class="tag">Driver position (live)</span>
+          <span class="tag">Team radio</span>
+          <span class="tag">Stints</span>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
+
+    <!-- Data flow -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Architecture</p>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">How data <em>flows</em></h2>
+        <p class="about-body">On season select, four Jolpica requests fire in parallel using <code>Promise.all</code> — race results (paginated), driver standings, constructor standings, and qualifying (paginated). Results are cached in memory so switching back to a previously loaded season is instant.</p>
+        <p class="about-body">OpenF1 pit data loads asynchronously after the main render — it fills in the pit stop block without blocking the rest of the page. All data is fetched fresh from the API on each page load; nothing is stored server-side.</p>
+
+        <div class="flow-steps">
+          <div class="flow-step">
+            <span class="flow-num">01</span>
+            <div>
+              <p class="flow-title">Season select</p>
+              <p class="flow-body">Four Jolpica requests fire in parallel via <code>Promise.all</code></p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <span class="flow-num">02</span>
+            <div>
+              <p class="flow-title">Pagination merge</p>
+              <p class="flow-body">Race results pages are merged by <code>round</code> number into complete race objects</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <span class="flow-num">03</span>
+            <div>
+              <p class="flow-title">Render</p>
+              <p class="flow-body">Hero, metrics, tabs, right column, and charts are rendered from the merged data object</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <span class="flow-num">04</span>
+            <div>
+              <p class="flow-title">Pit data (async)</p>
+              <p class="flow-body">OpenF1 session + pit requests fire after main render — fills in the pit block on completion</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <span class="flow-num">05</span>
+            <div>
+              <p class="flow-title">Cache</p>
+              <p class="flow-body">Season data is stored in memory — re-selecting a season skips all fetches</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
+
+    <!-- CORS note -->
+    <section class="about-section" style="padding-bottom:80px">
+      <div class="about-section-label">
+        <p class="eyebrow">Running locally</p>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">Local server <em>required</em></h2>
+        <p class="about-body">Browsers block cross-origin API requests from <code>file://</code> URLs (CORS policy). You must serve the project through a local HTTP server. Any of these work:</p>
+        <div class="endpoint-list">
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:var(--bg-subtle);color:var(--text-3)">PY</div>
+            <code class="endpoint-path">python3 -m http.server 8080</code>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:var(--bg-subtle);color:var(--text-3)">NPX</div>
+            <code class="endpoint-path">npx serve .</code>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:var(--bg-subtle);color:var(--text-3)">VSC</div>
+            <code class="endpoint-path">Right-click index.html → Open with Live Server</code>
+          </div>
+        </div>
+        <p class="about-body" style="margin-top:16px">Then open <code>http://localhost:8080</code> in your browser.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>Jolpica F1 API &amp; OpenF1 API</span>
+      <span id="footer-year"></span>
+    </div>
+  </footer>
+
+  <script src="app.js" data-page="static"></script>
+</body>
+</html>

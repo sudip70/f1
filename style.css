@@ -707,90 +707,6 @@ html.dark .theme-icon-dark  { display: flex; }
 .site-footer .container { display: flex; justify-content: space-between; align-items: center; }
 .site-footer span { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); letter-spacing: 1px; }
 
-/* ─── CORS / file:// sticky banner ──────────────────────────────── */
-.cors-banner {
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--border-2);
-  z-index: 98;
-}
-.cors-banner-inner {
-  max-width: 1160px;
-  margin: 0 auto;
-  padding: 12px 32px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-.cors-banner-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.cors-banner-text strong {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-.cors-banner-text span {
-  font-size: 11px;
-  color: var(--text-3);
-}
-.cors-banner-text code {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  background: var(--bg-card);
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  color: var(--text-2);
-}
-.cors-banner-commands {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  flex: 1;
-}
-.cors-cmd {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-2);
-  background: var(--bg-card);
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  user-select: all;
-  cursor: text;
-  white-space: nowrap;
-}
-.cors-sep {
-  font-size: 11px;
-  color: var(--text-4);
-  white-space: nowrap;
-}
-.cors-dismiss {
-  margin-left: auto;
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--text-4);
-  cursor: pointer;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  transition: background 0.15s, color 0.15s;
-}
-.cors-dismiss:hover {
-  background: var(--border);
-  color: var(--text-2);
-}
-
 /* ─── Race row — expandable ──────────────────────────────────────── */
 .race-row {
   cursor: pointer;
@@ -1361,8 +1277,3 @@ html.dark .theme-icon-dark  { display: flex; }
   border: 1px solid var(--border);
   color: var(--text-2);
 }
-
-/* FIX [11]: .server-instructions and related selectors removed — this component
-   no longer exists in app.js (replaced by .cors-banner). Dead code deleted:
-   .server-instructions, .server-instructions-title, .server-instructions-sub,
-   .server-option, .server-option-label, .server-code, .server-instructions-then */

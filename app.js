@@ -119,8 +119,15 @@ function isCorsError(err) {
 }
 
 // FIX [8]: accept an AbortSignal so in-flight requests can be cancelled
-async function jolpicaFetch(path, signal) {
+// Retry up to 3 times on 429 with exponential backoff (1s, 2s, 4s)
+async function jolpicaFetch(path, signal, _attempt = 0) {
   const res = await fetch(`${JOLPICA}/${path}`, { signal });
+  if (res.status === 429) {
+    if (_attempt >= 3) throw new Error('Jolpica rate limit exceeded — please wait a moment then try again');
+    const delay = Math.pow(2, _attempt) * 1000;
+    await new Promise(r => setTimeout(r, delay));
+    return jolpicaFetch(path, signal, _attempt + 1);
+  }
   if (!res.ok) throw new Error(`Jolpica ${res.status}: ${path}`);
   return res.json();
 }
@@ -181,18 +188,14 @@ async function fetchRaceResults(year, signal) {
   const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
+  // Sequential pagination — avoids firing 16 requests simultaneously and
+  // triggering Jolpica's 429 rate limit (200 req/hour)
   const pages = [first];
-  if (total > PAGE) {
-    const offsets = Array.from(
-      { length: Math.ceil((total - PAGE) / PAGE) },
-      (_, i) => PAGE + i * PAGE
-    );
-    const rest = await Promise.all(
-      offsets.map(offset =>
-        jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`, signal)
-      )
-    );
-    pages.push(...rest);
+  let offset = PAGE;
+  while (offset < total) {
+    const page = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`, signal);
+    pages.push(page);
+    offset += PAGE;
   }
 
   const byRound = {};
@@ -215,18 +218,13 @@ async function fetchQualifying(year, signal) {
   const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
+  // Sequential pagination — same reason as fetchRaceResults
   const pages = [first];
-  if (total > PAGE) {
-    const offsets = Array.from(
-      { length: Math.ceil((total - PAGE) / PAGE) },
-      (_, i) => PAGE + i * PAGE
-    );
-    const rest = await Promise.all(
-      offsets.map(offset =>
-        jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`, signal)
-      )
-    );
-    pages.push(...rest);
+  let offset = PAGE;
+  while (offset < total) {
+    const page = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`, signal);
+    pages.push(page);
+    offset += PAGE;
   }
 
   const byRound = {};
@@ -1592,7 +1590,7 @@ async function fetchAndRender(year) {
 
   isLoading = true;
   setApiStatus('loading');
-  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year}`);
+  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year} · loading sequentially to avoid rate limits`);
 
   try {
     const data = await loadSeason(year, signal);

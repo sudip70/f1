@@ -118,6 +118,9 @@ function isCorsError(err) {
   );
 }
 
+// Small pause between paginated requests to stay well under the 200 req/hour limit
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 // FIX [8]: accept an AbortSignal so in-flight requests can be cancelled
 // Retry up to 3 times on 429 with exponential backoff (1s, 2s, 4s)
 async function jolpicaFetch(path, signal, _attempt = 0) {
@@ -188,11 +191,12 @@ async function fetchRaceResults(year, signal) {
   const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
-  // Sequential pagination — avoids firing 16 requests simultaneously and
-  // triggering Jolpica's 429 rate limit (200 req/hour)
+  // Sequential pagination with a small delay between pages — avoids the
+  // 429 rate limit (200 req/hour) that fires when many pages load at once
   const pages = [first];
   let offset = PAGE;
   while (offset < total) {
+    await sleep(200);
     const page = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`, signal);
     pages.push(page);
     offset += PAGE;
@@ -218,10 +222,11 @@ async function fetchQualifying(year, signal) {
   const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
-  // Sequential pagination — same reason as fetchRaceResults
+  // Sequential pagination with a small delay — same reason as fetchRaceResults
   const pages = [first];
   let offset = PAGE;
   while (offset < total) {
+    await sleep(200);
     const page = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`, signal);
     pages.push(page);
     offset += PAGE;
@@ -252,12 +257,14 @@ async function loadSeason(year, signal) {
     return seasonCache[year];
   }
 
-  const [rawRaces, constructorRes, driverRes, rawQual] = await Promise.all([
-    fetchRaceResults(year, signal),
+  // Fetch results first (most pages), then standings (cheap, 1 req each),
+  // then qualifying — all sequential to avoid bursting the rate limit
+  const rawRaces      = await fetchRaceResults(year, signal);
+  const [constructorRes, driverRes] = await Promise.all([
     jolpicaFetch(`${year}/constructorstandings/`, signal),
     jolpicaFetch(`${year}/driverstandings/`, signal),
-    fetchQualifying(year, signal),
   ]);
+  const rawQual = await fetchQualifying(year, signal);
 
   // Parse races
   const races = rawRaces.map(r => {
@@ -1590,7 +1597,7 @@ async function fetchAndRender(year) {
 
   isLoading = true;
   setApiStatus('loading');
-  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year} · loading sequentially to avoid rate limits`);
+  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year} · this may take a few seconds`);
 
   try {
     const data = await loadSeason(year, signal);

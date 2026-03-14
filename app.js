@@ -118,7 +118,6 @@ function isCorsError(err) {
   );
 }
 
-// Small pause between paginated requests to stay well under the 200 req/hour limit
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // FIX [8]: accept an AbortSignal so in-flight requests can be cancelled
@@ -128,11 +127,27 @@ async function jolpicaFetch(path, signal, _attempt = 0) {
   if (res.status === 429) {
     if (_attempt >= 3) throw new Error('Jolpica rate limit exceeded — please wait a moment then try again');
     const delay = Math.pow(2, _attempt) * 1000;
-    await new Promise(r => setTimeout(r, delay));
+    await sleep(delay);
     return jolpicaFetch(path, signal, _attempt + 1);
   }
   if (!res.ok) throw new Error(`Jolpica ${res.status}: ${path}`);
   return res.json();
+}
+
+// Fetch an array of paths in small batches with a pause between batches.
+// BATCH_SIZE=3 pages at once, 300ms between batches — fast but rate-limit safe.
+// onProgress(fetched, total) is called after each batch for live UI updates.
+async function jolpicaFetchBatched(paths, signal, onProgress) {
+  const BATCH = 3;
+  const results = [];
+  for (let i = 0; i < paths.length; i += BATCH) {
+    if (i > 0) await sleep(300);
+    const batch = paths.slice(i, i + BATCH);
+    const pages = await Promise.all(batch.map(p => jolpicaFetch(p, signal)));
+    results.push(...pages);
+    if (onProgress) onProgress(results.length, paths.length);
+  }
+  return results;
 }
 
 async function openf1Fetch(path) {
@@ -191,16 +206,16 @@ async function fetchRaceResults(year, signal) {
   const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
-  // Sequential pagination with a small delay between pages — avoids the
-  // 429 rate limit (200 req/hour) that fires when many pages load at once
-  const pages = [first];
-  let offset = PAGE;
-  while (offset < total) {
-    await sleep(200);
-    const page = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`, signal);
-    pages.push(page);
-    offset += PAGE;
-  }
+  // Batched pagination — 3 pages in parallel, 300ms between batches
+  const remainingOffsets = [];
+  for (let o = PAGE; o < total; o += PAGE) remainingOffsets.push(o);
+
+  const restPaths = remainingOffsets.map(o => `${year}/results/?limit=${PAGE}&offset=${o}`);
+  const rest = await jolpicaFetchBatched(restPaths, signal, (done, tot) => {
+    const sub = document.querySelector('.loading-sub');
+    if (sub) sub.textContent = `JOLPICA F1 — ${year} · results ${done + 1} / ${tot + 1} pages`;
+  });
+  const pages = [first, ...rest];
 
   const byRound = {};
   pages.forEach(page => {
@@ -222,15 +237,16 @@ async function fetchQualifying(year, signal) {
   const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
-  // Sequential pagination with a small delay — same reason as fetchRaceResults
-  const pages = [first];
-  let offset = PAGE;
-  while (offset < total) {
-    await sleep(200);
-    const page = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`, signal);
-    pages.push(page);
-    offset += PAGE;
-  }
+  // Batched pagination — 3 pages in parallel, 300ms between batches
+  const remainingOffsets = [];
+  for (let o = PAGE; o < total; o += PAGE) remainingOffsets.push(o);
+
+  const restPaths = remainingOffsets.map(o => `${year}/qualifying/?limit=${PAGE}&offset=${o}`);
+  const rest = await jolpicaFetchBatched(restPaths, signal, (done, tot) => {
+    const sub = document.querySelector('.loading-sub');
+    if (sub) sub.textContent = `JOLPICA F1 — ${year} · qualifying ${done + 1} / ${tot + 1} pages`;
+  });
+  const pages = [first, ...rest];
 
   const byRound = {};
   pages.forEach(page => {
@@ -1597,7 +1613,7 @@ async function fetchAndRender(year) {
 
   isLoading = true;
   setApiStatus('loading');
-  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year} · this may take a few seconds`);
+  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year}`);
 
   try {
     const data = await loadSeason(year, signal);

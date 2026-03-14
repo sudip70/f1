@@ -1037,50 +1037,7 @@ function showLoading(msg = 'FETCHING RACE DATA', sub = '') {
 }
 
 function showError(err) {
-  const isFileProt = location.protocol === 'file:';
-  const isCors     = isCorsError(err);
-  const showSetup  = isFileProt || isCors;
-  const message    = typeof err === 'string' ? err : err?.message || 'Unknown error';
-
-  if (showSetup) {
-    if (!document.getElementById('cors-banner')) {
-      const banner = document.createElement('div');
-      banner.id        = 'cors-banner';
-      banner.className = 'cors-banner fade-up';
-      banner.innerHTML = `
-        <div class="cors-banner-inner">
-          <div class="cors-banner-text">
-            <strong>Local server required</strong>
-            <span>Browsers block API calls from <code>file://</code> URLs — run a local server first.</span>
-          </div>
-          <div class="cors-banner-commands">
-            <code class="cors-cmd">python3 -m http.server 8080</code>
-            <span class="cors-sep">or</span>
-            <code class="cors-cmd">npx serve .</code>
-            <span class="cors-sep">then open</span>
-            <code class="cors-cmd">http://localhost:8080</code>
-          </div>
-          <button class="cors-dismiss" aria-label="Dismiss">✕</button>
-        </div>
-      `;
-      // FIX [5]: wire up dismiss with addEventListener, not inline onclick
-      banner.querySelector('.cors-dismiss').addEventListener('click', () => banner.remove());
-
-      const seasonWrap = document.querySelector('.season-bar-wrap');
-      if (seasonWrap) seasonWrap.insertAdjacentElement('afterend', banner);
-      else            document.querySelector('.nav').insertAdjacentElement('afterend', banner);
-    }
-    if (document.getElementById('content').innerHTML.trim() === '') {
-      document.getElementById('content').innerHTML = `
-        <div class="error-wrap fade-up" style="padding-top:40px">
-          <p class="error-eyebrow">Waiting for local server</p>
-          <p class="error-msg">Run one of the commands above, then refresh this page.</p>
-        </div>
-      `;
-    }
-    return;
-  }
-
+  const message = typeof err === 'string' ? err : err?.message || 'Unknown error';
   document.getElementById('content').innerHTML = `
     <div class="error-wrap fade-up">
       <p class="error-eyebrow">Error</p>

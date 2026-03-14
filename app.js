@@ -5,13 +5,33 @@
 
    Run via a local server — cannot fetch from file:// URLs.
    Quick start:  python3 -m http.server 8080
+                 npx serve .
+
+   FIXES APPLIED (v2):
+   [1]  document.currentScript → null-safe DOM check
+   [2]  Cache TTL for live/current season (5 min)
+   [3]  renderGeneration guard — prevents stale chart renders on rapid season switching
+   [4]  Tab buttons use data-tab attribute matching (not fragile textContent)
+   [5]  Global onclick replaced with addEventListener after render
+   [6]  Sprint points (2021+) — documented limitation, stub comment added
+   [7]  loadPitData catch block now logs warning instead of silent swallow
+   [8]  AbortController cancels in-flight fetches on rapid season switches
+   [9]  animateCount guards against 0/falsy targets
+   [10] season-bar buttons get aria-pressed for accessibility
+   [11] SEASONS derived dynamically from current year (no hardcoded 2025)
+   [12] teamColor() memoized
+   [13] renderSeason split into focused sub-renderers
+   [14] <meta> tags added in index.html (see note in README)
 ═══════════════════════════════════════════════════════════════════ */
 'use strict';
 
 /* ─── Config ─────────────────────────────────────────────────────── */
-const JOLPICA = 'https://api.jolpi.ca/ergast/f1';
-const OPENF1  = 'https://api.openf1.org/v1';
-const SEASONS = Array.from({ length: 26 }, (_, i) => 2025 - i); // 2025 → 2000
+const JOLPICA     = 'https://api.jolpi.ca/ergast/f1';
+const OPENF1      = 'https://api.openf1.org/v1';
+const CACHE_TTL   = 5 * 60 * 1000;           // 5 minutes — for live/current season
+// FIX [11]: derive dynamically so the app stays current every year
+const THIS_YEAR   = new Date().getFullYear();
+const SEASONS     = Array.from({ length: THIS_YEAR - 1999 }, (_, i) => THIS_YEAR - i);
 
 /* ─── Team colours ───────────────────────────────────────────────── */
 const TEAM_COLORS = {
@@ -45,13 +65,18 @@ const TEAM_COLORS = {
   'Marussia':        '#580000', 'Manor Marussia': '#580000',
 };
 
+// FIX [12]: memoize teamColor to avoid re-scanning the map on every call
+const _teamColorCache = {};
 function teamColor(name) {
   if (!name) return '#aaa';
+  if (_teamColorCache[name]) return _teamColorCache[name];
   const lower = name.toLowerCase();
   for (const [key, color] of Object.entries(TEAM_COLORS)) {
-    if (lower.includes(key.toLowerCase())) return color;
+    if (lower.includes(key.toLowerCase())) {
+      return (_teamColorCache[name] = color);
+    }
   }
-  return '#999';
+  return (_teamColorCache[name] = '#999');
 }
 
 /* ─── Historical points systems ──────────────────────────────────── */
@@ -67,14 +92,22 @@ function getPoints(position, year) {
             : PTS_SYSTEMS.classic;
   return sys[position - 1] || 0;
 }
+// NOTE [6]: Sprint race bonus points (2021+) are NOT included in the points
+// progression chart — they require a separate /sprint/ endpoint call per round.
+// Cumulative totals for 2021+ seasons will be slightly lower than official standings.
+// To fix: fetch `jolpicaFetch(`${year}/sprint/`)` and merge into allResults.
 
 /* ─── State ──────────────────────────────────────────────────────── */
-let currentSeason = 2024;
-let currentTab    = 'races';
-let seasonCache   = {};
-let chartInstances = {};
-let isLoading     = false;
-let typewriterTimer = null;
+let currentSeason         = THIS_YEAR - 1;      // default to last completed season
+let currentTab            = 'races';
+let seasonCache           = {};
+let seasonCacheTime       = {};                  // FIX [2]: TTL timestamps per season
+let chartInstances        = {};
+let isLoading             = false;
+let typewriterTimer       = null;
+let renderGeneration      = 0;                   // FIX [3]: stale chart render guard
+let activeFetchController = null;               // FIX [8]: abort controller
+let expandedRound         = null;               // race drill-down: currently open round
 
 /* ─── Fetch helpers ──────────────────────────────────────────────── */
 function isCorsError(err) {
@@ -85,8 +118,9 @@ function isCorsError(err) {
   );
 }
 
-async function jolpicaFetch(path) {
-  const res = await fetch(`${JOLPICA}/${path}`);
+// FIX [8]: accept an AbortSignal so in-flight requests can be cancelled
+async function jolpicaFetch(path, signal) {
+  const res = await fetch(`${JOLPICA}/${path}`, { signal });
   if (!res.ok) throw new Error(`Jolpica ${res.status}: ${path}`);
   return res.json();
 }
@@ -97,22 +131,56 @@ async function openf1Fetch(path) {
   return res.json();
 }
 
-/* ─── Paginated race results fetch ───────────────────────────────────
-   KEY FIX: Jolpica caps each page at 30 rows regardless of `limit`.
-   Each row is ONE driver result, not one race.
-   A 24-race season has ~480 rows (24 × 20 drivers).
-   The same race round can appear split across two pages, so we must
-   MERGE results by round number instead of collecting race objects
-   from each page directly.
-─────────────────────────────────────────────────────────────────── */
-async function fetchRaceResults(year) {
-  const PAGE = 30;
+/* ─── Lap time helpers ───────────────────────────────────────────── */
+function computeQuartiles(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const n = s.length;
+  return {
+    min: s[0],
+    q1:  s[Math.floor(n * 0.25)],
+    med: s[Math.floor(n * 0.50)],
+    q3:  s[Math.floor(n * 0.75)],
+    max: s[n - 1],
+  };
+}
 
-  // First request reveals total row count
-  const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`);
+// Fetch lap times + driver map for one race from OpenF1 (on-demand)
+async function fetchRaceLapTimes(year, round, raceDate) {
+  try {
+    const sessions = await openf1Fetch(`sessions?year=${year}&session_name=Race`);
+    // Match by date first (most reliable), fall back to array index
+    const session = sessions.find(s => s.date_start?.startsWith(raceDate))
+                 || sessions[round - 1];
+    if (!session) throw new Error('session not found');
+
+    const [laps, of1Drivers] = await Promise.all([
+      openf1Fetch(`laps?session_key=${session.session_key}`),
+      openf1Fetch(`drivers?session_key=${session.session_key}`),
+    ]);
+
+    // Build driver_number → code map
+    const numToCode = {};
+    of1Drivers.forEach(d => { numToCode[d.driver_number] = d.name_acronym; });
+
+    return { session, laps, numToCode };
+  } catch (err) {
+    console.warn('Lap time fetch failed:', err.message);
+    return null;
+  }
+}
+
+/* ─── Paginated race results fetch ───────────────────────────────────
+   Jolpica caps each page at 30 rows regardless of `limit`.
+   Each row is ONE driver result, not one race.
+   A 24-race season ≈ 480 rows (24 × 20 drivers).
+   The same round can be split across pages, so we merge by round number.
+─────────────────────────────────────────────────────────────────── */
+async function fetchRaceResults(year, signal) {
+  const PAGE = 30;
+  const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
-  // Fetch all remaining pages in parallel
   const pages = [first];
   if (total > PAGE) {
     const offsets = Array.from(
@@ -120,17 +188,17 @@ async function fetchRaceResults(year) {
       (_, i) => PAGE + i * PAGE
     );
     const rest = await Promise.all(
-      offsets.map(offset => jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`))
+      offsets.map(offset =>
+        jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=${offset}`, signal)
+      )
     );
     pages.push(...rest);
   }
 
-  // Merge driver results into a map keyed by round number
   const byRound = {};
   pages.forEach(page => {
     (page.MRData.RaceTable.Races || []).forEach(race => {
       if (!byRound[race.round]) {
-        // Store race metadata once; Results array will be built up
         byRound[race.round] = { ...race, Results: [] };
       }
       byRound[race.round].Results.push(...(race.Results || []));
@@ -142,10 +210,9 @@ async function fetchRaceResults(year) {
 }
 
 /* ─── Paginated qualifying fetch (same merge strategy) ───────────── */
-async function fetchQualifying(year) {
+async function fetchQualifying(year, signal) {
   const PAGE = 30;
-
-  const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`);
+  const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`, signal);
   const total = parseInt(first.MRData.total) || 0;
 
   const pages = [first];
@@ -155,7 +222,9 @@ async function fetchQualifying(year) {
       (_, i) => PAGE + i * PAGE
     );
     const rest = await Promise.all(
-      offsets.map(offset => jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`))
+      offsets.map(offset =>
+        jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=${offset}`, signal)
+      )
     );
     pages.push(...rest);
   }
@@ -175,17 +244,24 @@ async function fetchQualifying(year) {
 }
 
 /* ─── Load a full season ─────────────────────────────────────────── */
-async function loadSeason(year) {
-  if (seasonCache[year]) return seasonCache[year];
+async function loadSeason(year, signal) {
+  // FIX [2]: for the current/live season, bust the cache after TTL
+  const isLiveSeason = year === THIS_YEAR;
+  const now          = Date.now();
+  const expired      = !seasonCacheTime[year] || (now - seasonCacheTime[year] > CACHE_TTL);
+
+  if (seasonCache[year] && !(isLiveSeason && expired)) {
+    return seasonCache[year];
+  }
 
   const [rawRaces, constructorRes, driverRes, rawQual] = await Promise.all([
-    fetchRaceResults(year),
-    jolpicaFetch(`${year}/constructorstandings/`),
-    jolpicaFetch(`${year}/driverstandings/`),
-    fetchQualifying(year),
+    fetchRaceResults(year, signal),
+    jolpicaFetch(`${year}/constructorstandings/`, signal),
+    jolpicaFetch(`${year}/driverstandings/`, signal),
+    fetchQualifying(year, signal),
   ]);
 
-  // Parse races — keep full driver list for chart use
+  // Parse races
   const races = rawRaces.map(r => {
     const top = r.Results?.[0] || {};
     return {
@@ -199,20 +275,19 @@ async function loadSeason(year) {
       grid:    parseInt(top.grid) || 0,
       laps:    parseInt(top.laps) || 0,
       time:    top.Time?.time || top.status || '—',
-      // Full results needed for charts
       allResults: (r.Results || []).map(res => ({
-        pos:  parseInt(res.position) || 99,
-        name: `${res.Driver.givenName} ${res.Driver.familyName}`,
-        code: res.Driver.code,
-        team: res.Constructor?.name || '—',
-        grid: parseInt(res.grid) || 0,
+        pos:        parseInt(res.position) || 99,
+        name:       `${res.Driver.givenName} ${res.Driver.familyName}`,
+        code:       res.Driver.code,
+        team:       res.Constructor?.name || '—',
+        grid:       parseInt(res.grid) || 0,
         fastestLap: res.FastestLap?.rank === '1',
       })),
     };
   });
 
   // Parse constructor standings
-  const cStandings = constructorRes.MRData.StandingsTable.StandingsLists?.[0];
+  const cStandings  = constructorRes.MRData.StandingsTable.StandingsLists?.[0];
   const constructors = (cStandings?.ConstructorStandings || []).map(c => ({
     pos:    parseInt(c.position),
     team:   c.Constructor.name,
@@ -223,7 +298,7 @@ async function loadSeason(year) {
   // Parse driver standings
   const dStandings = driverRes.MRData.StandingsTable.StandingsLists?.[0];
   const champion   = dStandings?.DriverStandings?.[0];
-  const drivers = (dStandings?.DriverStandings || []).map(d => ({
+  const drivers    = (dStandings?.DriverStandings || []).map(d => ({
     pos:    parseInt(d.position),
     name:   `${d.Driver.givenName} ${d.Driver.familyName}`,
     code:   d.Driver.code,
@@ -254,11 +329,12 @@ async function loadSeason(year) {
   // Champion summary stats
   const champDriver = champion?.Driver;
   const champTeam   = champion?.Constructors?.[0];
-
-  const champCode = champDriver?.code || '';
-  const poles   = qualifying.filter(r => r.results[0]?.code === champCode).length;
-  const podiums = rawRaces.reduce((n, r) =>
-    n + (r.Results || []).filter(res => parseInt(res.position) <= 3 && res.Driver?.code === champCode).length, 0);
+  const champCode   = champDriver?.code || '';
+  const poles       = qualifying.filter(r => r.results[0]?.code === champCode).length;
+  const podiums     = rawRaces.reduce((n, r) =>
+    n + (r.Results || []).filter(res =>
+      parseInt(res.position) <= 3 && res.Driver?.code === champCode
+    ).length, 0);
   const fastestLaps = rawRaces.reduce((n, r) => {
     const fl = (r.Results || []).find(res => res.FastestLap?.rank === '1');
     return n + (fl?.Driver?.code === champCode ? 1 : 0);
@@ -282,7 +358,8 @@ async function loadSeason(year) {
     qualifying,
   };
 
-  seasonCache[year] = seasonData;
+  seasonCache[year]     = seasonData;
+  seasonCacheTime[year] = Date.now();   // FIX [2]: stamp the cache time
   return seasonData;
 }
 
@@ -300,22 +377,24 @@ function buildWinShare(races) {
 }
 
 function buildPointsProgression(data, topN = 5) {
-  const topDrivers = data.drivers.slice(0, topN);
+  const topDrivers  = data.drivers.slice(0, topN);
   const sortedRaces = [...data.races].sort((a, b) => a.round - b.round);
 
   const series = topDrivers.map(driver => {
     let cumulative = 0;
     const points = [0];
     sortedRaces.forEach(race => {
-      const result = race.allResults.find(r => r.code === driver.code || r.name === driver.name);
+      const result = race.allResults.find(r =>
+        r.code === driver.code || r.name === driver.name
+      );
       cumulative += result ? getPoints(result.pos, data.year) : 0;
       points.push(cumulative);
     });
     return {
-      name: driver.name,
+      name:    driver.name,
       surname: driver.name.split(' ').pop(),
-      team: driver.team,
-      code: driver.code,
+      team:    driver.team,
+      code:    driver.code,
       points,
     };
   });
@@ -328,17 +407,16 @@ function buildPointsProgression(data, topN = 5) {
 function isDark() {
   return document.documentElement.classList.contains('dark');
 }
-
 function chartGridColor()  { return isDark() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'; }
 function chartTickColor()  { return isDark() ? '#444' : '#ccc'; }
 function tooltipOptions()  {
   return {
     backgroundColor: isDark() ? '#1c1c1c' : '#ffffff',
     borderColor:     isDark() ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-    borderWidth: 1,
-    titleColor:  isDark() ? '#666' : '#999',
-    bodyColor:   isDark() ? '#aaa' : '#555',
-    padding: 10,
+    borderWidth:     1,
+    titleColor:      isDark() ? '#666' : '#999',
+    bodyColor:       isDark() ? '#aaa' : '#555',
+    padding:         10,
   };
 }
 
@@ -368,27 +446,30 @@ function buildProgressionChart(canvasId, data) {
     data: {
       labels,
       datasets: series.map(s => ({
-        label:           s.surname,
-        data:            s.points,
-        borderColor:     teamColor(s.team),
-        backgroundColor: 'transparent',
-        borderWidth:     s.name === data.champion ? 2.5 : 1,
-        pointRadius:     s.name === data.champion ? 3 : 0,
+        label:            s.surname,
+        data:             s.points,
+        borderColor:      teamColor(s.team),
+        backgroundColor:  'transparent',
+        borderWidth:      s.name === data.champion ? 2.5 : 1,
+        pointRadius:      s.name === data.champion ? 3 : 0,
         pointHoverRadius: 5,
-        tension: 0.35,
+        tension:          0.35,
       })),
     },
     options: {
-      responsive: true,
+      responsive:          true,
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
-          display: true,
+          display:  true,
           position: 'bottom',
           labels: { boxWidth: 8, padding: 16, color: chartTickColor(), usePointStyle: true, pointStyleWidth: 8 },
         },
-        tooltip: { ...tooltipOptions(), callbacks: { label: c => `  ${c.dataset.label}: ${c.raw} pts` } },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: { label: c => `  ${c.dataset.label}: ${c.raw} pts` },
+        },
       },
       scales: {
         x: { grid: { color: grid }, ticks: { color: ticks, maxTicksLimit: 12 } },
@@ -419,12 +500,15 @@ function buildWinsBarChart(canvasId, data) {
       }],
     },
     options: {
-      indexAxis: 'y',
-      responsive: true,
+      indexAxis:           'y',
+      responsive:          true,
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { ...tooltipOptions(), callbacks: { label: c => `  ${c.raw} wins` } },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: { label: c => `  ${c.raw} wins` },
+        },
       },
       scales: {
         x: { grid: { color: grid }, ticks: { color: ticks, precision: 0 } },
@@ -448,21 +532,24 @@ function buildConstructorDonut(canvasId, data) {
         data:            top6.map(c => c.points),
         backgroundColor: top6.map(c => teamColor(c.team) + 'bb'),
         borderColor:     top6.map(c => teamColor(c.team)),
-        borderWidth: 1.5,
+        borderWidth:     1.5,
         hoverBorderWidth: 2.5,
       }],
     },
     options: {
-      responsive: true,
+      responsive:          true,
       maintainAspectRatio: false,
-      cutout: '70%',
+      cutout:              '70%',
       plugins: {
         legend: {
-          display: true,
+          display:  true,
           position: 'bottom',
           labels: { boxWidth: 8, padding: 14, color: chartTickColor(), usePointStyle: true, pointStyleWidth: 8 },
         },
-        tooltip: { ...tooltipOptions(), callbacks: { label: c => `  ${c.label}: ${c.raw} pts` } },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: { label: c => `  ${c.label}: ${c.raw} pts` },
+        },
       },
     },
   });
@@ -472,17 +559,17 @@ function buildGridScatterChart(canvasId, data) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
-  const grid  = chartGridColor();
-  const ticks = chartTickColor();
+  const grid   = chartGridColor();
+  const ticks  = chartTickColor();
   const fieldPoints = [], champPoints = [], dnfPoints = [];
 
   data.races.forEach(race => {
     race.allResults.forEach(res => {
       if (!res.grid || res.grid === 0) return;
       const pt = { x: res.grid, y: res.pos };
-      if (res.pos >= 19)              dnfPoints.push(pt);
+      if (res.pos >= 19)                    dnfPoints.push(pt);
       else if (res.code === data.champCode) champPoints.push(pt);
-      else                            fieldPoints.push(pt);
+      else                                  fieldPoints.push(pt);
     });
   });
 
@@ -490,25 +577,50 @@ function buildGridScatterChart(canvasId, data) {
     type: 'scatter',
     data: {
       datasets: [
-        { label: 'Field',    data: fieldPoints, backgroundColor: isDark() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', pointRadius: 3, pointHoverRadius: 5 },
-        { label: 'DNF',      data: dnfPoints,   backgroundColor: 'rgba(200,0,0,0.2)',       pointRadius: 3, pointHoverRadius: 5 },
-        { label: data.champCode || 'Champion', data: champPoints, backgroundColor: teamColor(data.champTeam) + 'cc', borderColor: teamColor(data.champTeam), borderWidth: 1, pointRadius: 5, pointHoverRadius: 7 },
+        {
+          label:           'Field',
+          data:            fieldPoints,
+          backgroundColor: isDark() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+          pointRadius: 3, pointHoverRadius: 5,
+        },
+        {
+          label:           'DNF',
+          data:            dnfPoints,
+          backgroundColor: 'rgba(200,0,0,0.2)',
+          pointRadius: 3, pointHoverRadius: 5,
+        },
+        {
+          label:           data.champCode || 'Champion',
+          data:            champPoints,
+          backgroundColor: teamColor(data.champTeam) + 'cc',
+          borderColor:     teamColor(data.champTeam),
+          borderWidth: 1, pointRadius: 5, pointHoverRadius: 7,
+        },
       ],
     },
     options: {
-      responsive: true,
+      responsive:          true,
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          display: true,
+          display:  true,
           position: 'bottom',
           labels: { boxWidth: 8, padding: 14, color: chartTickColor(), usePointStyle: true, pointStyleWidth: 8 },
         },
-        tooltip: { ...tooltipOptions(), callbacks: { label: c => `  Grid ${c.raw.x} → Finish P${c.raw.y}` } },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: { label: c => `  Grid ${c.raw.x} → Finish P${c.raw.y}` },
+        },
       },
       scales: {
-        x: { title: { display: true, text: 'Grid', color: ticks, font: { size: 9 } }, grid: { color: grid }, ticks: { color: ticks, precision: 0 }, min: 1 },
-        y: { title: { display: true, text: 'Finish', color: ticks, font: { size: 9 } }, grid: { color: grid }, ticks: { color: ticks, precision: 0 }, reverse: true, min: 1 },
+        x: {
+          title: { display: true, text: 'Grid', color: ticks, font: { size: 9 } },
+          grid: { color: grid }, ticks: { color: ticks, precision: 0 }, min: 1,
+        },
+        y: {
+          title: { display: true, text: 'Finish', color: ticks, font: { size: 9 } },
+          grid: { color: grid }, ticks: { color: ticks, precision: 0 }, reverse: true, min: 1,
+        },
       },
     },
   });
@@ -518,8 +630,12 @@ function buildGainLossChart(canvasId, data) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
-  const sorted = [...data.races].sort((a, b) => a.round - b.round);
-  const labels = [], values = [];
+  const sorted   = [...data.races].sort((a, b) => a.round - b.round);
+  const labels   = [];
+  const values   = [];
+  const champCol = teamColor(data.champTeam);
+  const grid     = chartGridColor();
+  const ticks    = chartTickColor();
 
   sorted.forEach(race => {
     const result = race.allResults.find(r => r.code === data.champCode);
@@ -527,10 +643,6 @@ function buildGainLossChart(canvasId, data) {
     labels.push(`R${race.round}`);
     values.push(result.grid - result.pos);
   });
-
-  const champCol = teamColor(data.champTeam);
-  const grid     = chartGridColor();
-  const ticks    = chartTickColor();
 
   chartInstances.gainloss = new Chart(ctx, {
     type: 'bar',
@@ -540,20 +652,230 @@ function buildGainLossChart(canvasId, data) {
         data:            values,
         backgroundColor: values.map(v => v >= 0 ? champCol + '99' : 'rgba(200,0,0,0.2)'),
         borderColor:     values.map(v => v >= 0 ? champCol + 'cc' : 'rgba(200,0,0,0.5)'),
-        borderWidth: 0,
-        borderRadius: 3,
+        borderWidth:     0,
+        borderRadius:    3,
       }],
     },
     options: {
-      responsive: true,
+      responsive:          true,
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { ...tooltipOptions(), callbacks: { label: c => c.raw >= 0 ? `  +${c.raw} gained` : `  ${c.raw} lost` } },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: { label: c => c.raw >= 0 ? `  +${c.raw} gained` : `  ${c.raw} lost` },
+        },
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: ticks, maxTicksLimit: 14 } },
         y: { grid: { color: grid }, ticks: { color: ticks, precision: 0 } },
+      },
+    },
+  });
+}
+
+/* ─── Lap time box plot (used inside race drill-down) ────────────── */
+function buildLapBoxPlotChart(canvasId, laps, numToCode, raceResults) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+
+  const top8   = raceResults.slice(0, 8);
+  const grid   = chartGridColor();
+  const ticks  = chartTickColor();
+
+  // Group lap durations by driver code, skip lap 1 + outliers
+  const byCode = {};
+  laps.forEach(lap => {
+    const code = numToCode[lap.driver_number];
+    if (!code || !lap.lap_duration || lap.lap_duration <= 0 || lap.lap_number === 1) return;
+    if (!byCode[code]) byCode[code] = [];
+    byCode[code].push(lap.lap_duration);
+  });
+
+  // Strip pit-stop laps (> 1.3× per-driver median)
+  Object.keys(byCode).forEach(code => {
+    const arr = [...byCode[code]].sort((a, b) => a - b);
+    const med = arr[Math.floor(arr.length * 0.5)] || 999;
+    byCode[code] = arr.filter(t => t < med * 1.3);
+  });
+
+  const labels  = [], iqrData = [], medData = [], colors = [];
+
+  top8.forEach(res => {
+    const times = byCode[res.code] || [];
+    if (times.length < 3) return;
+    const q = computeQuartiles(times);
+    labels.push(res.code || `P${res.pos}`);
+    iqrData.push([q.q1, q.q3]);
+    medData.push(q.med);
+    colors.push(teamColor(res.team));
+  });
+
+  if (chartInstances[`lapbox_${canvasId}`]) {
+    try { chartInstances[`lapbox_${canvasId}`].destroy(); } catch (_) {}
+  }
+
+  chartInstances[`lapbox_${canvasId}`] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          // IQR box: Q1 → Q3 as floating bar
+          label:           'IQR (Q1–Q3)',
+          type:            'bar',
+          data:            iqrData,
+          backgroundColor: colors.map(c => c + '44'),
+          borderColor:     colors,
+          borderWidth:     1.5,
+          borderRadius:    3,
+          barPercentage:   0.5,
+        },
+        {
+          // Median as a floating point (line type, showLine false)
+          label:                'Median',
+          type:                 'line',
+          data:                 medData,
+          showLine:             false,
+          pointBackgroundColor: colors,
+          pointBorderColor:     colors,
+          pointRadius:          5,
+          pointHoverRadius:     7,
+        },
+      ],
+    },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: {
+            label: c => {
+              if (c.datasetIndex === 0) {
+                const [q1, q3] = c.raw;
+                return `  Q1 ${q1.toFixed(2)}s  ·  Q3 ${q3.toFixed(2)}s`;
+              }
+              return `  Median ${c.raw.toFixed(2)}s`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: ticks } },
+        y: {
+          grid:  { color: grid },
+          ticks: { color: ticks, callback: v => v.toFixed(0) + 's' },
+          title: { display: true, text: 'Lap time (s)', color: ticks, font: { size: 9 } },
+        },
+      },
+    },
+  });
+}
+
+/* ─── Teammate head-to-head diverging bar chart ──────────────────── */
+function buildTeammateComparisonData(data) {
+  const teamMap = {};
+  data.drivers.forEach(d => {
+    if (!teamMap[d.team]) teamMap[d.team] = [];
+    teamMap[d.team].push(d);
+  });
+
+  return Object.entries(teamMap)
+    .filter(([, drivers]) => drivers.length >= 2)
+    .map(([team, drivers]) => {
+      const [d1, d2] = drivers.slice(0, 2);
+
+      // Race H2H — both must have classified finish (pos < 19)
+      let d1Race = 0, d2Race = 0;
+      data.races.forEach(race => {
+        const r1 = race.allResults.find(r => r.code === d1.code || r.name === d1.name);
+        const r2 = race.allResults.find(r => r.code === d2.code || r.name === d2.name);
+        if (r1 && r2 && r1.pos < 19 && r2.pos < 19) {
+          r1.pos < r2.pos ? d1Race++ : d2Race++;
+        }
+      });
+
+      // Qualifying H2H
+      let d1Qual = 0, d2Qual = 0;
+      data.qualifying.forEach(race => {
+        const q1 = race.results.find(r => r.code === d1.code);
+        const q2 = race.results.find(r => r.code === d2.code);
+        if (q1 && q2) { q1.pos < q2.pos ? d1Qual++ : d2Qual++; }
+      });
+
+      return { team, d1, d2, d1Race, d2Race, d1Qual, d2Qual };
+    })
+    .sort((a, b) =>
+      (b.d1.points + b.d2.points) - (a.d1.points + a.d2.points)
+    );
+}
+
+function buildTeammateComparisonChart(canvasId, data) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+
+  const pairs = buildTeammateComparisonData(data).slice(0, 6);
+  const grid  = chartGridColor();
+  const ticks = chartTickColor();
+
+  chartInstances.teammate = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: pairs.map(p => p.team.replace('F1 Team', '').replace(' Racing', '').trim()),
+      datasets: [
+        {
+          // Driver 1 bars extend RIGHT (positive)
+          label:           'Driver 1',
+          data:            pairs.map(p => p.d1Race),
+          backgroundColor: pairs.map(p => teamColor(p.team) + 'cc'),
+          borderColor:     pairs.map(p => teamColor(p.team)),
+          borderWidth:     1,
+          borderRadius:    3,
+          stack:           'h2h',
+        },
+        {
+          // Driver 2 bars extend LEFT (negative)
+          label:           'Driver 2',
+          data:            pairs.map(p => -p.d2Race),
+          backgroundColor: pairs.map(p => teamColor(p.team) + '44'),
+          borderColor:     pairs.map(p => teamColor(p.team)),
+          borderWidth:     1,
+          borderRadius:    3,
+          stack:           'h2h',
+        },
+      ],
+    },
+    options: {
+      indexAxis:           'y',
+      responsive:          true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...tooltipOptions(),
+          callbacks: {
+            label: c => {
+              const pair   = pairs[c.dataIndex];
+              const wins   = Math.abs(c.raw);
+              const driver = c.datasetIndex === 0 ? pair.d1 : pair.d2;
+              return `  ${driver.code || driver.name.split(' ').pop()}: ${wins} races ahead`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid:    { color: grid },
+          ticks:   { color: ticks, callback: v => Math.abs(v) },
+        },
+        y: {
+          stacked: true,
+          grid:    { display: false },
+          ticks:   { color: ticks, font: { size: 11 } },
+        },
       },
     },
   });
@@ -564,6 +886,7 @@ function renderCharts(data) {
   const el = document.getElementById('charts-section');
   if (!el) return;
 
+  const gen     = ++renderGeneration;
   const surname = data.champion.split(' ').pop();
 
   el.innerHTML = `
@@ -596,16 +919,23 @@ function renderCharts(data) {
         <p class="chart-title">Positions gained / lost — <em>${surname}</em></p>
         <div class="chart-wrap"><canvas id="ch-gl"></canvas></div>
       </div>
+      <div class="chart-card-full">
+        <p class="chart-eyebrow">Teammate Battle</p>
+        <p class="chart-title">Head-to-head race results — <em>Driver 1 (solid) vs Driver 2 (faded)</em></p>
+        <div class="chart-wrap-tall"><canvas id="ch-teammate"></canvas></div>
+      </div>
     </div>
   `;
 
   destroyCharts();
   requestAnimationFrame(() => {
-    buildProgressionChart('ch-prog', data);
-    buildWinsBarChart('ch-wins', data);
-    buildConstructorDonut('ch-donut', data);
-    buildGridScatterChart('ch-scatter', data);
-    buildGainLossChart('ch-gl', data);
+    if (gen !== renderGeneration) return;
+    buildProgressionChart    ('ch-prog',     data);
+    buildWinsBarChart        ('ch-wins',     data);
+    buildConstructorDonut    ('ch-donut',    data);
+    buildGridScatterChart    ('ch-scatter',  data);
+    buildGainLossChart       ('ch-gl',       data);
+    buildTeammateComparisonChart('ch-teammate', data);
   });
 }
 
@@ -624,7 +954,9 @@ async function loadPitData(year, el) {
     const min   = times.length ? Math.min(...times).toFixed(2) : '—';
 
     const stopsByDriver = {};
-    pits.forEach(p => { stopsByDriver[p.driver_number] = (stopsByDriver[p.driver_number] || 0) + 1; });
+    pits.forEach(p => {
+      stopsByDriver[p.driver_number] = (stopsByDriver[p.driver_number] || 0) + 1;
+    });
     const maxStops = Math.max(...Object.values(stopsByDriver));
 
     el.innerHTML = `
@@ -636,10 +968,15 @@ async function loadPitData(year, el) {
         ['Fastest stop',   min + 's'],
         ['Max per driver', maxStops],
       ].map(([l, v]) => `
-        <div class="stat-row"><span class="stat-label">${l}</span><span class="stat-val">${v}</span></div>
+        <div class="stat-row">
+          <span class="stat-label">${l}</span>
+          <span class="stat-val">${v}</span>
+        </div>
       `).join('')}
     `;
-  } catch (_) {
+  } catch (err) {
+    // FIX [7]: log instead of silently swallowing
+    console.warn('OpenF1 pit data unavailable:', err.message);
     el.innerHTML = `
       <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
       <p class="pit-source">OpenF1 · no data for ${year}</p>
@@ -648,7 +985,9 @@ async function loadPitData(year, el) {
 }
 
 /* ─── Animations ─────────────────────────────────────────────────── */
+// FIX [9]: guard against 0 / falsy target — prevents NaN output
 function animateCount(el, target, duration) {
+  if (!target) { el.textContent = 0; return; }
   const isFloat = !Number.isInteger(target);
   const start   = performance.now();
   const run = now => {
@@ -662,7 +1001,7 @@ function animateCount(el, target, duration) {
 
 function typewriteChampion(nameEl, cursorEl, fullName, speed = 42) {
   if (typewriterTimer) clearInterval(typewriterTimer);
-  nameEl.innerHTML = '';
+  nameEl.innerHTML       = '';
   cursorEl.style.opacity = '1';
 
   const spaceIdx = fullName.lastIndexOf(' ');
@@ -673,11 +1012,9 @@ function typewriteChampion(nameEl, cursorEl, fullName, speed = 42) {
   setTimeout(() => {
     typewriterTimer = setInterval(() => {
       i++;
-      const slice = fullName.slice(0, i);
       if (i <= spaceIdx) {
-        nameEl.innerHTML = slice;
+        nameEl.innerHTML = fullName.slice(0, i);
       } else {
-        // First name done — render surname in italic
         nameEl.innerHTML = `${firstName} <em>${surname.slice(0, i - spaceIdx - 1)}</em>`;
       }
       if (i >= fullName.length) {
@@ -705,12 +1042,10 @@ function showError(err) {
   const showSetup  = isFileProt || isCors;
   const message    = typeof err === 'string' ? err : err?.message || 'Unknown error';
 
-  // For CORS / file:// errors, inject a sticky banner once and keep it.
-  // Don't wipe the content area on every season click.
   if (showSetup) {
     if (!document.getElementById('cors-banner')) {
       const banner = document.createElement('div');
-      banner.id = 'cors-banner';
+      banner.id        = 'cors-banner';
       banner.className = 'cors-banner fade-up';
       banner.innerHTML = `
         <div class="cors-banner-inner">
@@ -725,15 +1060,16 @@ function showError(err) {
             <span class="cors-sep">then open</span>
             <code class="cors-cmd">http://localhost:8080</code>
           </div>
-          <button class="cors-dismiss" onclick="document.getElementById('cors-banner').remove()" aria-label="Dismiss">✕</button>
+          <button class="cors-dismiss" aria-label="Dismiss">✕</button>
         </div>
       `;
-      // Insert after the season bar wrap (below both sticky rows)
+      // FIX [5]: wire up dismiss with addEventListener, not inline onclick
+      banner.querySelector('.cors-dismiss').addEventListener('click', () => banner.remove());
+
       const seasonWrap = document.querySelector('.season-bar-wrap');
       if (seasonWrap) seasonWrap.insertAdjacentElement('afterend', banner);
-      else document.querySelector('.nav').insertAdjacentElement('afterend', banner);
+      else            document.querySelector('.nav').insertAdjacentElement('afterend', banner);
     }
-    // Don't replace content if it already has something rendered
     if (document.getElementById('content').innerHTML.trim() === '') {
       document.getElementById('content').innerHTML = `
         <div class="error-wrap fade-up" style="padding-top:40px">
@@ -745,7 +1081,6 @@ function showError(err) {
     return;
   }
 
-  // Generic (non-CORS) error — replace content as before
   document.getElementById('content').innerHTML = `
     <div class="error-wrap fade-up">
       <p class="error-eyebrow">Error</p>
@@ -762,7 +1097,11 @@ function renderRacesTab(data) {
       <span class="row-count">${data.totalRaces} rounds</span>
     </div>
     ${data.races.map((race, i) => `
-      <div class="race-row" style="animation-delay:${i * 25}ms">
+      <div class="race-row${expandedRound === race.round ? ' expanded' : ''}"
+           data-round="${race.round}"
+           style="animation-delay:${i * 25}ms"
+           role="button" tabindex="0"
+           aria-expanded="${expandedRound === race.round}">
         <span class="race-num">${String(race.round).padStart(2, '0')}</span>
         <div>
           <p class="race-name">${race.name}</p>
@@ -773,6 +1112,9 @@ function renderRacesTab(data) {
         </div>
         <span class="race-pole-note">${race.grid === 1 ? 'P1 START' : ''}</span>
         <span class="race-date">${race.date}</span>
+        <span class="race-expand-icon" aria-hidden="true">
+          ${expandedRound === race.round ? '▲' : '▼'}
+        </span>
       </div>
     `).join('')}
   `;
@@ -842,12 +1184,11 @@ function getTabContent(data) {
   return '';
 }
 
-/* ─── Right column ───────────────────────────────────────────────── */
-function renderRightColumn(data) {
-  const maxPts  = Math.max(...data.constructors.map(c => c.points), 1);
-  const ws      = buildWinShare(data.races);
-  const maxWins = ws[0]?.wins || 1;
+/* ─── Right column sub-renderers ─────────────────────────────────── */
+// FIX [13]: split renderRightColumn into focused helpers
 
+function renderConstructorList(data) {
+  const maxPts = Math.max(...data.constructors.map(c => c.points), 1);
   return `
     <p class="eyebrow">Constructors</p>
     <div class="constructor-list">
@@ -870,9 +1211,14 @@ function renderRightColumn(data) {
         </div>
       `).join('')}
     </div>
+  `;
+}
 
+function renderWinShare(data) {
+  const ws      = buildWinShare(data.races);
+  const maxWins = ws[0]?.wins || 1;
+  return `
     <hr class="right-divider">
-
     <p class="eyebrow" style="margin-bottom:14px">Win Share</p>
     ${ws.slice(0, 8).map((w, i) => `
       <div class="win-row fade-up" style="animation-delay:${i * 48 + 160}ms">
@@ -887,16 +1233,12 @@ function renderRightColumn(data) {
         <span class="win-num">${w.wins}</span>
       </div>
     `).join('')}
+  `;
+}
 
+function renderSeasonStats(data) {
+  return `
     <hr class="right-divider">
-
-    <div id="pit-block">
-      <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
-      <p class="pit-loading">Fetching OpenF1 data…</p>
-    </div>
-
-    <hr class="right-divider">
-
     <p class="eyebrow" style="margin-bottom:14px">Season Stats</p>
     ${[
       ['Total rounds',  data.totalRaces],
@@ -912,67 +1254,319 @@ function renderRightColumn(data) {
   `;
 }
 
-/* ─── Main render ────────────────────────────────────────────────── */
-function renderSeason(data) {
-  const champColor = teamColor(data.champTeam);
-  const metrics = [
-    { label: 'Race Wins',  id: 'mv-wins',  val: data.champWins,   max: data.totalRaces,  delay: 0   },
-    { label: 'Pole Pos.',  id: 'mv-poles', val: data.poles,       max: data.totalRaces,  delay: 80  },
-    { label: 'Podiums',    id: 'mv-pods',  val: data.podiums,     max: data.totalRaces,  delay: 160 },
-    { label: 'Points',     id: 'mv-pts',   val: data.champPoints, max: data.champPoints, delay: 240 },
+function renderRightColumn(data) {
+  return `
+    ${renderConstructorList(data)}
+    ${renderWinShare(data)}
+    <hr class="right-divider">
+    <div id="pit-block">
+      <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
+      <p class="pit-loading">Fetching OpenF1 data…</p>
+    </div>
+    ${renderSeasonStats(data)}
+  `;
+}
+
+/* ─── Race drill-down ────────────────────────────────────────────── */
+function renderDrilldown(round, data) {
+  const race     = data.races.find(r => r.round === round);
+  const qualRace = data.qualifying.find(r => r.round === round);
+
+  const qualRows = qualRace?.results.length
+    ? qualRace.results.slice(0, 10).map(q => `
+        <div class="drilldown-row">
+          <span class="drilldown-pos">${String(q.pos).padStart(2, '0')}</span>
+          <span class="drilldown-name">${q.name.split(' ').pop()}</span>
+          <span class="drilldown-team-dot" style="background:${teamColor(q.team)}"></span>
+          <span class="drilldown-time">${q.q3 || q.q2 || q.q1 || '—'}</span>
+        </div>
+      `).join('')
+    : '<p class="drilldown-empty">No qualifying data</p>';
+
+  const raceRows = race.allResults.slice(0, 10).map(res => `
+    <div class="drilldown-row">
+      <span class="drilldown-pos">${String(res.pos).padStart(2, '0')}</span>
+      <span class="drilldown-name">${res.name.split(' ').pop()}</span>
+      <span class="drilldown-team-dot" style="background:${teamColor(res.team)}"></span>
+      ${res.fastestLap ? '<span class="drilldown-fl">FL</span>' : '<span class="drilldown-fl-empty"></span>'}
+    </div>
+  `).join('');
+
+  return `
+    <div class="drilldown-inner">
+      <div class="drilldown-col">
+        <p class="drilldown-col-title">Qualifying</p>
+        ${qualRows}
+      </div>
+      <div class="drilldown-divider"></div>
+      <div class="drilldown-col drilldown-col-race">
+        <p class="drilldown-col-title">Race — Top 10</p>
+        ${raceRows}
+        <div class="drilldown-lap-section">
+          <p class="drilldown-col-title" style="margin-top:20px">Lap Time Distribution</p>
+          <p class="drilldown-lap-loading">Loading OpenF1 data…</p>
+          <div class="drilldown-lap-chart" style="display:none;height:220px">
+            <canvas id="ch-lapbox-${round}"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadDrilldownLapChart(race, data) {
+  const section   = document.querySelector(`#drilldown-${race.round} .drilldown-lap-section`);
+  const loadingEl = section?.querySelector('.drilldown-lap-loading');
+  const chartWrap = section?.querySelector('.drilldown-lap-chart');
+  if (!section) return;
+
+  const result = await fetchRaceLapTimes(data.year, race.round, race.date);
+
+  if (!result || !result.laps.length) {
+    if (loadingEl) loadingEl.textContent = 'Lap data unavailable for this race';
+    return;
+  }
+
+  if (loadingEl) loadingEl.style.display = 'none';
+  if (chartWrap) chartWrap.style.display = 'block';
+
+  setChartDefaults();
+  buildLapBoxPlotChart(
+    `ch-lapbox-${race.round}`,
+    result.laps,
+    result.numToCode,
+    race.allResults.slice(0, 8)
+  );
+}
+
+function toggleRaceExpand(round, data) {
+  const existing = document.getElementById(`drilldown-${round}`);
+
+  // Collapse if already open
+  if (existing) {
+    existing.classList.add('drilldown-closing');
+    setTimeout(() => existing.remove(), 220);
+    document.querySelector(`.race-row[data-round="${round}"]`)?.classList.remove('expanded');
+    expandedRound = null;
+    return;
+  }
+
+  // Close any previously open panel
+  if (expandedRound !== null) {
+    const prev = document.getElementById(`drilldown-${expandedRound}`);
+    if (prev) { prev.classList.add('drilldown-closing'); setTimeout(() => prev.remove(), 220); }
+    document.querySelector(`.race-row[data-round="${expandedRound}"]`)?.classList.remove('expanded');
+  }
+
+  expandedRound = round;
+  const rowEl = document.querySelector(`.race-row[data-round="${round}"]`);
+  if (!rowEl) return;
+  rowEl.classList.add('expanded');
+
+  const panel = document.createElement('div');
+  panel.id        = `drilldown-${round}`;
+  panel.className = 'race-drilldown';
+  panel.innerHTML = renderDrilldown(round, data);
+  rowEl.insertAdjacentElement('afterend', panel);
+
+  // Trigger open animation on next frame
+  requestAnimationFrame(() => panel.classList.add('drilldown-open'));
+
+  // Non-blocking: load lap chart
+  const race = data.races.find(r => r.round === round);
+  if (race) loadDrilldownLapChart(race, data);
+}
+
+// Wire click handlers on all race rows — called after any tab content render
+function wireRaceRowClicks(data) {
+  if (currentTab !== 'races') return;
+  document.querySelectorAll('.race-row[data-round]').forEach(row => {
+    row.addEventListener('click', () =>
+      toggleRaceExpand(parseInt(row.dataset.round), data)
+    );
+  });
+}
+
+/* ─── Champion vs Runner-up comparison strip ─────────────────────── */
+function renderChampVsRunnerUp(data) {
+  if (data.drivers.length < 2) return '';
+
+  const champ  = data.drivers[0];
+  const runner = data.drivers[1];
+  const cc     = teamColor(champ.team);
+  const rc     = teamColor(runner.team);
+
+  // Race H2H — both must have a classified finish
+  let champAhead = 0, runnerAhead = 0;
+  data.races.forEach(race => {
+    const r1 = race.allResults.find(r => r.code === champ.code  || r.name === champ.name);
+    const r2 = race.allResults.find(r => r.code === runner.code || r.name === runner.name);
+    if (r1 && r2 && r1.pos < 19 && r2.pos < 19) {
+      r1.pos < r2.pos ? champAhead++ : runnerAhead++;
+    }
+  });
+
+  // Runner-up poles + podiums (champion values already in data)
+  const runnerPoles   = data.qualifying.filter(r => r.results[0]?.code === runner.code).length;
+  const runnerPodiums = data.races.reduce((n, r) =>
+    n + (r.allResults || []).filter(res =>
+      res.pos <= 3 && (res.code === runner.code || res.name === runner.name)
+    ).length, 0);
+
+  const stats = [
+    { label: 'Points',   c: champ.points,  r: runner.points  },
+    { label: 'Wins',     c: champ.wins,    r: runner.wins    },
+    { label: 'Poles',    c: data.poles,    r: runnerPoles    },
+    { label: 'Podiums',  c: data.podiums,  r: runnerPodiums  },
+    { label: 'Race H2H', c: champAhead,    r: runnerAhead    },
   ];
+
+  return `
+    <div class="cvs-section fade-up">
+      <p class="eyebrow" style="margin-bottom:20px">Head to Head — Champion vs Runner-up</p>
+
+      <div class="cvs-header">
+        <div class="cvs-driver">
+          <span class="cvs-pos-badge" style="border-color:${cc};color:${cc}">P1</span>
+          <div>
+            <p class="cvs-name">${champ.name}</p>
+            <div class="cvs-team-row">
+              <span class="team-dot" style="background:${cc}"></span>
+              <span class="cvs-team-name">${champ.team}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cvs-vs">VS</div>
+
+        <div class="cvs-driver cvs-driver-right">
+          <div style="text-align:right">
+            <p class="cvs-name">${runner.name}</p>
+            <div class="cvs-team-row" style="justify-content:flex-end">
+              <span class="cvs-team-name">${runner.team}</span>
+              <span class="team-dot" style="background:${rc}"></span>
+            </div>
+          </div>
+          <span class="cvs-pos-badge" style="border-color:${rc};color:${rc}">P2</span>
+        </div>
+      </div>
+
+      <div class="cvs-stats">
+        ${stats.map(s => {
+          const total    = (s.c + s.r) || 1;
+          const champPct = Math.round((s.c / total) * 100);
+          const runPct   = 100 - champPct;
+          return `
+            <div class="cvs-stat-row">
+              <span class="cvs-val cvs-val-left">${s.c}</span>
+              <div class="cvs-center">
+                <span class="cvs-label">${s.label}</span>
+                <div class="cvs-bar-track">
+                  <div class="cvs-bar-left  bar-anim" style="width:${champPct}%;background:${cc}"></div>
+                  <div class="cvs-bar-right bar-anim" style="width:${runPct}%;background:${rc}"></div>
+                </div>
+              </div>
+              <span class="cvs-val cvs-val-right">${s.r}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/* ─── Hero section ────────────────────────────────────────────────── */
+function renderHero(data) {
+  const champColor = teamColor(data.champTeam);
+  return `
+    <div class="hero">
+      <div class="hero-year-ghost">${data.year}</div>
+      <p class="eyebrow">World Champion — ${data.year}</p>
+      <div class="hero-name-row">
+        <span id="hero-name" class="hero-name"></span>
+        <span id="hero-cursor" class="cursor-blink"></span>
+      </div>
+      <div class="hero-meta">
+        <span class="hero-team-pill">
+          <span class="hero-team-dot" style="background:${champColor}"></span>
+          ${data.champTeam}
+        </span>
+        <span class="hero-nat">${data.champNat}</span>
+      </div>
+    </div>
+  `;
+}
+
+/* ─── Metrics grid ────────────────────────────────────────────────── */
+function renderMetricsGrid(data) {
+  const metrics = [
+    { label: 'Race Wins', id: 'mv-wins',  val: data.champWins,   max: data.totalRaces,  delay: 0   },
+    { label: 'Pole Pos.', id: 'mv-poles', val: data.poles,       max: data.totalRaces,  delay: 80  },
+    { label: 'Podiums',   id: 'mv-pods',  val: data.podiums,     max: data.totalRaces,  delay: 160 },
+    { label: 'Points',    id: 'mv-pts',   val: data.champPoints, max: data.champPoints, delay: 240 },
+  ];
+  return { html: `
+    <div class="metrics-grid">
+      ${metrics.map(m => `
+        <div class="metric-cell fade-up" style="animation-delay:${m.delay}ms">
+          <p class="metric-label">${m.label}</p>
+          <div id="${m.id}" class="metric-value">0</div>
+          <div class="metric-track">
+            <div class="metric-fill bar-anim"
+                 style="width:${Math.round((m.val / m.max) * 100)}%;
+                        animation-delay:${m.delay + 460}ms">
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `, metrics };
+}
+
+/* ─── Main render ────────────────────────────────────────────────── */
+// FIX [13]: renderSeason delegates to focused sub-renderers
+// FIX [4] & [5]: tabs use data-tab attribute; events wired via addEventListener
+function renderSeason(data) {
+  expandedRound = null; // reset drill-down on season change
+  const { html: metricsHtml, metrics } = renderMetricsGrid(data);
 
   document.getElementById('content').innerHTML = `
     <div style="animation:fadeUp .5s ease forwards;opacity:0">
-
-      <div class="hero">
-        <div class="hero-year-ghost">${data.year}</div>
-        <p class="eyebrow">World Champion — ${data.year}</p>
-        <div class="hero-name-row">
-          <span id="hero-name" class="hero-name"></span>
-          <span id="hero-cursor" class="cursor-blink"></span>
-        </div>
-        <div class="hero-meta">
-          <span class="hero-team-pill">
-            <span class="hero-team-dot" style="background:${champColor}"></span>
-            ${data.champTeam}
-          </span>
-          <span class="hero-nat">${data.champNat}</span>
-        </div>
-      </div>
-
-      <div class="metrics-grid">
-        ${metrics.map(m => `
-          <div class="metric-cell fade-up" style="animation-delay:${m.delay}ms">
-            <p class="metric-label">${m.label}</p>
-            <div id="${m.id}" class="metric-value">0</div>
-            <div class="metric-track">
-              <div class="metric-fill bar-anim"
-                   style="width:${Math.round((m.val / m.max) * 100)}%;
-                          animation-delay:${m.delay + 460}ms">
-              </div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-
+      ${renderHero(data)}
+      ${metricsHtml}
+      ${renderChampVsRunnerUp(data)}
       <div class="main-grid">
         <div>
           <div class="tabs">
-            <button class="tab-btn${currentTab === 'races'      ? ' active' : ''}" onclick="switchTab('races')">Races</button>
-            <button class="tab-btn${currentTab === 'qualifying' ? ' active' : ''}" onclick="switchTab('qualifying')">Qualifying</button>
-            <button class="tab-btn${currentTab === 'drivers'    ? ' active' : ''}" onclick="switchTab('drivers')">Drivers</button>
+            <button class="tab-btn${currentTab === 'races'      ? ' active' : ''}" data-tab="races">Races</button>
+            <button class="tab-btn${currentTab === 'qualifying' ? ' active' : ''}" data-tab="qualifying">Qualifying</button>
+            <button class="tab-btn${currentTab === 'drivers'    ? ' active' : ''}" data-tab="drivers">Drivers</button>
           </div>
           <div id="tab-content">${getTabContent(data)}</div>
         </div>
         <div>${renderRightColumn(data)}</div>
       </div>
-
       <div class="charts-section fade-up" id="charts-section" style="animation-delay:280ms"></div>
     </div>
   `;
 
-  // Kick off typewriter + metric counters
+  // Wire tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // Wire race row clicks (keyboard too)
+  wireRaceRowClicks(data);
+  document.querySelectorAll('.race-row[data-round]').forEach(row => {
+    row.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleRaceExpand(parseInt(row.dataset.round), data);
+      }
+    });
+  });
+
+  // Typewriter + metric counters
   requestAnimationFrame(() => {
     const nameEl   = document.getElementById('hero-name');
     const cursorEl = document.getElementById('hero-cursor');
@@ -986,30 +1580,39 @@ function renderSeason(data) {
     }, 150);
   });
 
-  // Non-blocking: pit data
   const pitEl = document.getElementById('pit-block');
   if (pitEl) loadPitData(data.year, pitEl);
 
-  // Charts render after short settle delay
   setTimeout(() => renderCharts(data), 420);
 }
 
 /* ─── Tab switching ──────────────────────────────────────────────── */
 function switchTab(tab) {
-  currentTab = tab;
+  currentTab    = tab;
+  expandedRound = null; // close any open drill-down when switching tabs
   const data = seasonCache[currentSeason];
   if (!data) return;
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.textContent.trim().toLowerCase() === tab);
+    btn.classList.toggle('active', btn.dataset.tab === tab);
   });
 
   const tabEl = document.getElementById('tab-content');
   if (tabEl) {
     tabEl.style.cssText = 'opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s';
     setTimeout(() => {
-      tabEl.innerHTML = getTabContent(data);
+      tabEl.innerHTML    = getTabContent(data);
       tabEl.style.cssText = 'opacity:1;transform:translateY(0);transition:opacity .2s,transform .2s';
+      // Re-wire race row clicks every time the Races tab renders
+      wireRaceRowClicks(data);
+      document.querySelectorAll('.race-row[data-round]').forEach(row => {
+        row.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleRaceExpand(parseInt(row.dataset.round), data);
+          }
+        });
+      });
     }, 180);
   }
 }
@@ -1024,15 +1627,21 @@ async function selectSeason(year) {
 }
 
 async function fetchAndRender(year) {
+  // FIX [8]: cancel any in-flight fetch from a previous season selection
+  if (activeFetchController) activeFetchController.abort();
+  activeFetchController = new AbortController();
+  const { signal } = activeFetchController;
+
   isLoading = true;
   setApiStatus('loading');
   showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year}`);
 
   try {
-    const data = await loadSeason(year);
+    const data = await loadSeason(year, signal);
     setApiStatus('live');
     renderSeason(data);
   } catch (err) {
+    if (err.name === 'AbortError') return; // FIX [8]: silently ignore cancelled requests
     console.error(err);
     setApiStatus('error');
     showError(err);
@@ -1047,10 +1656,16 @@ function buildSeasonBar() {
   document.getElementById('season-bar').innerHTML = SEASONS.map(yr => `
     <button
       class="season-btn${yr === currentSeason ? ' active' : ''}"
-      onclick="selectSeason(${yr})"
+      data-year="${yr}"
+      aria-pressed="${yr === currentSeason}"
       ${isLoading ? 'disabled' : ''}
     >${yr}</button>
   `).join('');
+
+  // FIX [5]: wire season buttons with addEventListener
+  document.querySelectorAll('.season-btn').forEach(btn => {
+    btn.addEventListener('click', () => selectSeason(parseInt(btn.dataset.year)));
+  });
 }
 
 /* ─── API status indicator ───────────────────────────────────────── */
@@ -1080,7 +1695,6 @@ function toggleTheme() {
   const dark = document.documentElement.classList.toggle('dark');
   localStorage.setItem('f1-theme', dark ? 'dark' : 'light');
   setChartDefaults();
-  // Rebuild charts so axis/tooltip colours update
   const data = seasonCache[currentSeason];
   if (data) setTimeout(() => renderCharts(data), 50);
 }
@@ -1092,9 +1706,9 @@ setChartDefaults();
 document.getElementById('footer-year').textContent = `© ${new Date().getFullYear()} Sudip Shrestha`;
 document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
 
-// Only run dashboard logic on the main analytics page
-const isStaticPage = document.currentScript?.dataset.page === 'static'
-                  || !document.getElementById('season-bar');
+// FIX [1]: document.currentScript is null after script finishes parsing —
+// check the DOM directly instead
+const isStaticPage = !document.getElementById('season-bar');
 
 if (!isStaticPage) {
   buildSeasonBar();

@@ -1653,8 +1653,10 @@ async function fetchAndRender(year) {
     setApiStatus('error');
     // FIX [15]: friendly message for CORS / network errors
     showError(isCorsError(err)
-      ? 'Network error — make sure you\'re running via a local server, not file://'
-      : err);
+     ? (window.location.protocol === 'file://'
+         ? 'Network error — make sure you\'re running via a local server, not file://'
+         : 'Network error — the API may be temporarily unavailable. Please try again in a moment.')
+     : err);
   } finally {
     isLoading = false;
     buildSeasonBar();

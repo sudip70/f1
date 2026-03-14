@@ -421,6 +421,7 @@ function tooltipOptions()  {
 }
 
 function setChartDefaults() {
+  if (typeof Chart === 'undefined') return;
   Chart.defaults.color       = isDark() ? '#555' : '#aaa';
   Chart.defaults.borderColor = chartGridColor();
   Chart.defaults.font.family = "'JetBrains Mono', monospace";
@@ -1660,8 +1661,11 @@ function toggleTheme() {
 initTheme();
 setChartDefaults();
 
-document.getElementById('footer-year').textContent = `© ${new Date().getFullYear()} Sudip Shrestha`;
-document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+const _footerYear = document.getElementById('footer-year');
+if (_footerYear) _footerYear.textContent = `© ${new Date().getFullYear()} Sudip Shrestha`;
+
+const _themeToggle = document.getElementById('theme-toggle');
+if (_themeToggle) _themeToggle.addEventListener('click', toggleTheme);
 
 // FIX [1]: document.currentScript is null after script finishes parsing —
 // check the DOM directly instead

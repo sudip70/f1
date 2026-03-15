@@ -183,7 +183,6 @@ html.dark .nav {
   display: flex;
   align-items: center;
   gap: 2px;
-  flex: 1;
 }
 .nav-page-link {
   font-family: var(--font-mono);
@@ -215,6 +214,7 @@ html.dark .nav {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  margin-left: 8px;
 }
 
 /* ─── Season bar (below nav) ─────────────────────────────────────── */
@@ -426,7 +426,7 @@ html.dark .theme-icon-dark  { display: flex; }
 }
 
 @keyframes carDriveIn {
-  0%   { opacity: 0; transform: translateX(-160px); }
+  0%   { opacity: 0; transform: translateX(160px); }
   50%  { opacity: 1; }
   100% { opacity: 1; transform: translateX(0); }
 }

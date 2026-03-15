@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>F1. Analytics — About the API</title>
+  <title>F1. Analytics - About the API</title>
   <link rel="icon" type="image/svg+xml" href="image/2.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,11 +15,11 @@
   <nav class="nav">
     <div class="nav-inner">
       <a href="index.html" class="nav-logo">F1<span class="nav-dot">.</span></a>
+      <div style="flex:1"></div>
       <div class="nav-page-links">
         <a href="index.html" class="nav-page-link">Analytics</a>
-        <a href="about.html" class="nav-page-link">About</a>
-        <a href="about-api.html" class="nav-page-link active">About API</a>
-        <a href="https://sudip70.github.io" target="_blank" class="nav-page-link nav-page-link--portfolio">Portfolio</a>
+        <a href="about-api.html" class="nav-page-link active">Database & APIs</a>
+        <a href="about.html" class="nav-page-link">About Us</a>
       </div>
       <div class="nav-controls">
         <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
@@ -46,9 +46,102 @@
 
     <div class="page-hero">
       <p class="eyebrow">Data Sources</p>
-      <h1 class="page-title">About the <em>APIs</em></h1>
-      <p class="page-subtitle">This dashboard is powered by two free, open, no-auth public APIs. Here's what each one does, how they're called, and the data model behind the scenes.</p>
+      <h1 class="page-title">About the <em>Database</em> & <em>APIs</em></h1>
+      <p class="page-subtitle">This dashboard is powered by two free public APIs and a Supabase database. Past seasons are served from the database for speed and reliability - the current season is always fetched live from Jolpica.</p>
     </div>
+
+    <!-- Data origin -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Architecture</p>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">Data <em>origin</em></h2>
+        <p class="about-body">The app uses a hybrid data strategy depending on the season selected. Historical seasons (2000–2025) are stored in a Supabase PostgreSQL database - they load in under a second with no rate limiting. The current live season (2026) is always fetched directly from the Jolpica F1 API to ensure real-time accuracy.</p>
+
+        <div class="api-meta-row">
+          <div class="api-meta"><span class="api-meta-label">Past seasons</span><code class="api-meta-val">Supabase (2000 – 2025)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Current season</span><code class="api-meta-val">Jolpica F1 API (live)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Pit stops</span><code class="api-meta-val">OpenF1 API (all years)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Lap times</span><code class="api-meta-val">OpenF1 API (2023+)</code></div>
+        </div>
+
+        <div class="callout">
+          <p class="callout-title">Why a database?</p>
+          <p class="callout-body">Jolpica caps requests at 200 per hour and pages results at 30 rows. Loading a full 24-race season requires ~32 paginated requests. By seeding historical data into Supabase once, the app fetches an entire season in 5 parallel queries instead of 32+ sequential API calls - reducing load time from 4–5 seconds to under 1 second.</p>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
+
+    <!-- Supabase -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Database</p>
+        <a href="https://supabase.com" target="_blank" rel="noopener" class="about-link" style="margin-top:6px">supabase.com →</a>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">Supabase <em>Database</em></h2>
+        <p class="about-body">Supabase is an open-source Firebase alternative built on PostgreSQL. It provides a REST API that can be queried directly from the browser using the anon public key - no backend server needed. Row Level Security (RLS) is enabled on all tables, restricting the anon role to read-only SELECT access.</p>
+
+        <div class="api-meta-row">
+          <div class="api-meta"><span class="api-meta-label">Provider</span><code class="api-meta-val">Supabase (PostgreSQL)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Auth</span><code class="api-meta-val">Anon public key</code></div>
+          <div class="api-meta"><span class="api-meta-label">Access</span><code class="api-meta-val">Read-only (RLS enforced)</code></div>
+          <div class="api-meta"><span class="api-meta-label">Coverage</span><code class="api-meta-val">2000 – 2025</code></div>
+          <div class="api-meta"><span class="api-meta-label">Seeded from</span><code class="api-meta-val">Jolpica F1 API</code></div>
+          <div class="api-meta"><span class="api-meta-label">Queries</span><code class="api-meta-val">5 parallel per season</code></div>
+        </div>
+
+        <h3 class="about-subheading">Database schema</h3>
+
+        <div class="endpoint-list">
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TABLE</div>
+            <div>
+              <code class="endpoint-path">races</code>
+              <p class="endpoint-desc">One row per race. Stores <code>year</code>, <code>round</code>, <code>name</code>, <code>circuit</code>, <code>country</code>, <code>date</code>, <code>winner</code>, <code>team</code>, <code>grid</code>, <code>laps</code>, and <code>time</code>. Unique constraint on <code>(year, round)</code>.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TABLE</div>
+            <div>
+              <code class="endpoint-path">race_results</code>
+              <p class="endpoint-desc">One row per driver per race. Stores <code>year</code>, <code>round</code>, <code>pos</code>, <code>name</code>, <code>code</code>, <code>team</code>, <code>grid</code>, and <code>fastest_lap</code> (boolean). Used to build <code>allResults</code> arrays for charts and drill-downs. Unique constraint on <code>(year, round, pos)</code>.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TABLE</div>
+            <div>
+              <code class="endpoint-path">qualifying_results</code>
+              <p class="endpoint-desc">One row per driver per qualifying session. Stores <code>year</code>, <code>round</code>, <code>pos</code>, <code>name</code>, <code>code</code>, <code>team</code>, and lap times <code>q1</code>, <code>q2</code>, <code>q3</code> (nullable text). Unique constraint on <code>(year, round, pos)</code>.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TABLE</div>
+            <div>
+              <code class="endpoint-path">driver_standings</code>
+              <p class="endpoint-desc">Final driver championship standings per season. Stores <code>year</code>, <code>pos</code>, <code>name</code>, <code>code</code>, <code>nat</code>, <code>team</code>, <code>points</code>, and <code>wins</code>. The first row (pos 1) is used to derive all champion statistics. Unique constraint on <code>(year, pos)</code>.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TABLE</div>
+            <div>
+              <code class="endpoint-path">constructor_standings</code>
+              <p class="endpoint-desc">Final constructor championship standings per season. Stores <code>year</code>, <code>pos</code>, <code>team</code>, <code>points</code>, and <code>wins</code>. Used to build the constructor bar chart and right column rankings. Unique constraint on <code>(year, pos)</code>.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <p class="callout-title">Security</p>
+          <p class="callout-body">Row Level Security is enabled on all five tables. The anon public key - visible in the client-side code - can only execute <code>SELECT</code> statements. <code>INSERT</code>, <code>UPDATE</code>, and <code>DELETE</code> are blocked at the database policy level, so the data cannot be modified even if the key is extracted.</p>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
 
     <!-- Jolpica -->
     <section class="about-section">
@@ -58,7 +151,8 @@
       </div>
       <div class="about-section-content">
         <h2 class="about-heading">Jolpica F1 <em>API</em></h2>
-        <p class="about-body">Jolpica is an open-source API that maintains backwards compatibility with the now-deprecated Ergast API. It covers every Formula 1 season from 1950 onwards — race results, qualifying, driver and constructor standings, lap times, pit stops, and more. No account or API key required.</p>
+        <p class="about-body">Jolpica is an open-source API that maintains backwards compatibility with the now-deprecated Ergast API. It covers every Formula 1 season from 1950 onwards - race results, qualifying, driver and constructor standings, lap times, pit stops, and more. No account or API key required.</p>
+        <p class="about-body">In this app, Jolpica is used in two ways: as the original data source for seeding the Supabase database, and as the live data feed for the current season (2026) on every page load.</p>
 
         <div class="api-meta-row">
           <div class="api-meta"><span class="api-meta-label">Base URL</span><code class="api-meta-val">https://api.jolpi.ca/ergast/f1</code></div>
@@ -76,35 +170,35 @@
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/{year}/results/?limit=30&offset=0</code>
-              <p class="endpoint-desc">Race results for every round — paginated. Each page returns up to 30 driver-result rows (not races). A 24-race season has ~480 rows (24 × 20 drivers), requiring 16 paginated requests merged by round number.</p>
+              <p class="endpoint-desc">Race results for every round - paginated. Each page returns up to 30 driver-result rows (not races). A 24-race season has ~480 rows (24 × 20 drivers), requiring 16 paginated requests merged by round number.</p>
             </div>
           </div>
           <div class="endpoint">
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/{year}/driverstandings/</code>
-              <p class="endpoint-desc">Final driver championship standings — position, points, wins, nationality, and team for every classified driver.</p>
+              <p class="endpoint-desc">Final driver championship standings - position, points, wins, nationality, and team for every classified driver.</p>
             </div>
           </div>
           <div class="endpoint">
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/{year}/constructorstandings/</code>
-              <p class="endpoint-desc">Final constructor championship standings — position, points, and wins for each team.</p>
+              <p class="endpoint-desc">Final constructor championship standings - position, points, and wins for each team.</p>
             </div>
           </div>
           <div class="endpoint">
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/{year}/qualifying/?limit=30&offset=0</code>
-              <p class="endpoint-desc">Qualifying results per round — Q1, Q2, Q3 times and grid positions. Also paginated by driver-result row.</p>
+              <p class="endpoint-desc">Qualifying results per round - Q1, Q2, Q3 times and grid positions. Also paginated by driver-result row.</p>
             </div>
           </div>
         </div>
 
         <div class="callout">
           <p class="callout-title">Pagination note</p>
-          <p class="callout-body">The <code>limit</code> parameter is ignored for values above 30 — Jolpica always returns a maximum of 30 rows per page regardless. <code>MRData.total</code> tells you the total row count, not the race count. This dashboard paginates through all pages in parallel and merges results by <code>round</code> number to reconstruct complete race objects.</p>
+          <p class="callout-body">The <code>limit</code> parameter is ignored for values above 30 - Jolpica always returns a maximum of 30 rows per page regardless. <code>MRData.total</code> tells you the total row count, not the race count. This dashboard paginates through all pages in parallel and merges results by <code>round</code> number to reconstruct complete race objects.</p>
         </div>
       </div>
     </section>
@@ -143,28 +237,28 @@
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/pit?session_key={key}</code>
-              <p class="endpoint-desc">All pit stop events for a session — driver number, lap number, and duration in seconds. Used to compute total stops, average and fastest durations, and max stops per driver in the pit stop block.</p>
+              <p class="endpoint-desc">All pit stop events for a session - driver number, lap number, and duration in seconds. Used to compute total stops, average and fastest durations, and max stops per driver in the pit stop block.</p>
             </div>
           </div>
           <div class="endpoint">
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/laps?session_key={key}</code>
-              <p class="endpoint-desc">Individual lap records for every driver in a session — lap number, duration in seconds, and driver number. Used to build the lap time distribution chart inside the race drill-down. Lap 1 and pit-stop laps (more than 1.3× the driver's median) are stripped before rendering.</p>
+              <p class="endpoint-desc">Individual lap records for every driver in a session - lap number, duration in seconds, and driver number. Used to build the lap time distribution chart inside the race drill-down. Lap 1 and pit-stop laps (more than 1.3× the driver's median) are stripped before rendering.</p>
             </div>
           </div>
           <div class="endpoint">
             <div class="endpoint-method">GET</div>
             <div>
               <code class="endpoint-path">/drivers?session_key={key}</code>
-              <p class="endpoint-desc">Driver metadata for a session — maps <code>driver_number</code> to <code>name_acronym</code> (three-letter code). Fetched in parallel with <code>/laps</code> to label the lap time chart axes.</p>
+              <p class="endpoint-desc">Driver metadata for a session - maps <code>driver_number</code> to <code>name_acronym</code> (three-letter code). Fetched in parallel with <code>/laps</code> to label the lap time chart axes.</p>
             </div>
           </div>
         </div>
 
         <div class="callout">
           <p class="callout-title">Coverage note</p>
-          <p class="callout-body">OpenF1 data is available from the 2023 season onwards. For seasons before 2023 the pit stop block and lap time charts will show "no data" — this is expected. The Jolpica results data (race winner, lap counts, fastest lap) still loads normally for all seasons back to 2000.</p>
+          <p class="callout-body">OpenF1 data is available from the 2023 season onwards. For seasons before 2023 the pit stop block and lap time charts will show "no data" - this is expected. The Jolpica results data (race winner, lap counts, fastest lap) still loads normally for all seasons back to 2000.</p>
         </div>
 
         <h3 class="about-subheading">Available but not yet used</h3>
@@ -187,54 +281,60 @@
     <!-- Data flow -->
     <section class="about-section" style="padding-bottom:80px">
       <div class="about-section-label">
-        <p class="eyebrow">Architecture</p>
+        <p class="eyebrow">Flow</p>
       </div>
       <div class="about-section-content">
         <h2 class="about-heading">How data <em>flows</em></h2>
-        <p class="about-body">On season select, four Jolpica requests fire in parallel using <code>Promise.all</code> — race results (paginated), driver standings, constructor standings, and qualifying (paginated). Results are cached in memory so switching back to a previously loaded season is instant. The current season cache expires after 5 minutes to pick up live updates.</p>
-        <p class="about-body">OpenF1 data loads asynchronously in two places: the pit stop block fills in after the main render without blocking the page, and lap time data for each race is fetched on-demand when a race row is expanded in the drill-down view.</p>
+        <p class="about-body">On season select, the app first checks an in-memory cache. If the data is cached it renders instantly. For past seasons (2000–2025) it fires 5 parallel Supabase queries. For the current season it fires 4 parallel Jolpica requests with paginated batching. OpenF1 data loads asynchronously in two places: pit stop data fills in after the main render, and lap time data fetches on-demand when a race row is expanded.</p>
 
         <div class="flow-steps">
           <div class="flow-step">
             <span class="flow-num">01</span>
             <div>
               <p class="flow-title">Season select</p>
-              <p class="flow-body">An <code>AbortController</code> cancels any in-flight requests from a previous selection, then four Jolpica requests fire in parallel via <code>Promise.all</code>.</p>
+              <p class="flow-body">An <code>AbortController</code> cancels any in-flight requests from a previous selection. The app checks the in-memory cache first - if hit, renders immediately and skips all network calls.</p>
             </div>
           </div>
           <div class="flow-step">
             <span class="flow-num">02</span>
             <div>
-              <p class="flow-title">Pagination merge</p>
-              <p class="flow-body">Race results and qualifying pages are fetched in parallel and merged by <code>round</code> number into complete race objects.</p>
+              <p class="flow-title">Route to data source</p>
+              <p class="flow-body">Past seasons (≠ current year) query Supabase - 5 parallel <code>SELECT</code> statements covering races, results, qualifying, driver standings, and constructor standings. The current season fetches from Jolpica via <code>Promise.all</code> with paginated batching.</p>
             </div>
           </div>
           <div class="flow-step">
             <span class="flow-num">03</span>
             <div>
-              <p class="flow-title">Render</p>
-              <p class="flow-body">Hero, metrics, champion vs runner-up strip, tabs, right column, and charts are all rendered from the merged data object.</p>
+              <p class="flow-title">Normalise</p>
+              <p class="flow-body">Both paths produce an identical data shape - the same <code>seasonData</code> object with <code>races</code>, <code>drivers</code>, <code>constructors</code>, and <code>qualifying</code> arrays. All rendering code is shared regardless of the source.</p>
             </div>
           </div>
           <div class="flow-step">
             <span class="flow-num">04</span>
             <div>
-              <p class="flow-title">Pit data (async)</p>
-              <p class="flow-body">OpenF1 <code>/sessions</code> + <code>/pit</code> requests fire after the main render and fill in the pit stop block on completion.</p>
+              <p class="flow-title">Render</p>
+              <p class="flow-body">Hero, metrics, champion vs runner-up strip, tabs, right column, and charts are all rendered from the normalised data object. Adjacent seasons are pre-fetched silently in the background.</p>
             </div>
           </div>
           <div class="flow-step">
             <span class="flow-num">05</span>
+            <div>
+              <p class="flow-title">Pit data (async)</p>
+              <p class="flow-body">OpenF1 <code>/sessions</code> + <code>/pit</code> requests fire after the main render and fill in the pit stop block on completion without blocking the page.</p>
+            </div>
+          </div>
+          <div class="flow-step">
+            <span class="flow-num">06</span>
             <div>
               <p class="flow-title">Lap times (on demand)</p>
               <p class="flow-body">When a race row is expanded, OpenF1 <code>/laps</code> and <code>/drivers</code> are fetched for that session and rendered as a lap time distribution chart inside the drill-down panel.</p>
             </div>
           </div>
           <div class="flow-step">
-            <span class="flow-num">06</span>
+            <span class="flow-num">07</span>
             <div>
               <p class="flow-title">Cache</p>
-              <p class="flow-body">Season data is stored in memory — re-selecting a season skips all fetches. The current season busts the cache after 5 minutes.</p>
+              <p class="flow-body">Season data is stored in memory - re-selecting a season skips all fetches and network calls. The current season busts the cache after 5 minutes to pick up live race updates.</p>
             </div>
           </div>
         </div>
@@ -245,7 +345,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <span>Jolpica F1 API &amp; OpenF1 API</span>
+      <span>Jolpica F1 API &amp; OpenF1 API &amp; Supabase</span>
       <span id="footer-year"></span>
     </div>
   </footer>

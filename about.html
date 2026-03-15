@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>F1. Analytics — About</title>
+  <title>F1. Analytics - About</title>
   <link rel="icon" type="image/svg+xml" href="image/2.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,11 +15,11 @@
   <nav class="nav">
     <div class="nav-inner">
       <a href="index.html" class="nav-logo">F1<span class="nav-dot">.</span></a>
+      <div style="flex:1"></div>
       <div class="nav-page-links">
         <a href="index.html" class="nav-page-link">Analytics</a>
-        <a href="about.html" class="nav-page-link active">About</a>
-        <a href="about-api.html" class="nav-page-link">About API</a>
-        <a href="https://sudip70.github.io" target="_blank" class="nav-page-link nav-page-link--portfolio">Portfolio</a>
+        <a href="about-api.html" class="nav-page-link">Database & APIs</a>
+        <a href="about.html" class="nav-page-link active">About Us</a>
       </div>
       <div class="nav-controls">
         <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
@@ -45,25 +45,54 @@
   <main class="container">
 
     <!-- Page hero -->
-    <div class="page-hero">
-      <p class="eyebrow">About</p>
-      <h1 class="page-title">F1<span class="nav-dot">.</span> <em>Analytics</em></h1>
-      <p class="page-subtitle">A historical data dashboard for Formula 1 — built for fans, analysts, and developers who want more than a scoreboard.</p>
+    <div class="page-hero" style="position:relative;overflow:hidden;max-width:100%;">
+      <img src="image/funko.svg" alt="Funko Pop" style="
+        position: absolute;
+        right: 20px;
+        bottom: 10px;
+        height: 280px;
+        opacity: 0.9;
+        pointer-events: none;
+        user-select: none;
+        filter: drop-shadow(0 8px 24px rgba(0,0,0,0.3));
+      " />
+      <p class="eyebrow">About Me</p>
+      <h1 class="page-title">Sudip <em>Shrestha</em></h1>
+      <p class="page-subtitle">Data Analyst & AI Engineer based in Mississauga, ON - building data systems, dashboards, and AI-powered tools.</p>
+      <div class="about-links">
+        <a href="https://sudip70.github.io" class="about-link" target="_blank" rel="noopener">Portfolio →</a>
+        <a href="https://www.linkedin.com/in/sudipshrestha-58/" class="about-link" target="_blank" rel="noopener">LinkedIn →</a>
+        <a href="https://github.com/sudip70" class="about-link" target="_blank" rel="noopener">GitHub →</a>
+        <a href="mailto:sudipshrestha.ca@gmail.com" class="about-link">Email →</a>
+      </div>
     </div>
 
-    <!-- What is this -->
+    <!-- Who I am -->
     <section class="about-section">
       <div class="about-section-label">
-        <p class="eyebrow">Project</p>
+        <p class="eyebrow">Who I am</p>
       </div>
       <div class="about-section-content">
-        <h2 class="about-heading">What is this?</h2>
-        <p class="about-body">F1. Analytics is an open, browser-based dashboard that pulls live historical data from two public Formula 1 APIs — no account, no subscription, no paywall. It covers every season from 2000 to 2025, with race results, qualifying times, driver and constructor standings, pit stop telemetry, and five interactive charts per season.</p>
-        <p class="about-body">The goal is to make 25 years of F1 data explorable in one place, with a clean interface that stays out of the way of the data.</p>
+        <h2 class="about-heading">The person <em>behind this</em></h2>
+        <p class="about-body">I'm a Data Analyst and AI Engineer with a passion for turning raw data into clean, meaningful experiences. I work across the full stack of data - from pipelines and databases to interfaces people actually enjoy using. I believe good data visualisation should feel effortless: the insight should land before the chart needs explaining.</p>
+
+        <p class="about-body">This project started as a personal challenge to explore public sports APIs and ended up as a full analytics dashboard covering 26 years of Formula 1 data. It's also a reflection of how I approach side projects - ship something real, keep it clean, and care about the details.</p>
       </div>
     </section>
 
     <hr class="about-divider">
+
+    <!-- About the project -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">The project</p>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">What is <em>F1. Analytics?</em></h2>
+        <p class="about-body">F1. Analytics is an open, browser-based dashboard that makes 26 years of Formula 1 data explorable in one place. No account, no subscription, no paywall. Past seasons (2000–2025) load from a Supabase database in under a second. The current season fetches live from the Jolpica F1 API so it's always up to date.</p>
+        <p class="about-body">The interface is intentionally minimal - the data should be the focus, not the chrome around it. Every interaction, animation, and layout decision was made to get out of the way and let the numbers speak.</p>
+      </div>
+    </section>
 
     <!-- Stats row -->
     <div class="about-stats">
@@ -76,12 +105,12 @@
         <span class="about-stat-label">Races indexed</span>
       </div>
       <div class="about-stat">
-        <span class="about-stat-num">5</span>
+        <span class="about-stat-num">6</span>
         <span class="about-stat-label">Charts per season</span>
       </div>
       <div class="about-stat">
-        <span class="about-stat-num">2</span>
-        <span class="about-stat-label">Live data sources</span>
+        <span class="about-stat-num">3</span>
+        <span class="about-stat-label">Data sources</span>
       </div>
     </div>
 
@@ -93,11 +122,11 @@
         <p class="eyebrow">Features</p>
       </div>
       <div class="about-section-content">
-        <h2 class="about-heading">What's included</h2>
+        <h2 class="about-heading">What's <em>included</em></h2>
         <div class="feature-grid">
           <div class="feature-card">
             <p class="feature-title">Race Results</p>
-            <p class="feature-body">Full race-by-race results for every season, including winner, team, grid position, and date. Scrollable inline list, no pagination.</p>
+            <p class="feature-body">Full race-by-race results for every season - winner, team, grid position, and date. Expandable drill-down per race with qualifying and top 10 finish side by side.</p>
           </div>
           <div class="feature-card">
             <p class="feature-title">Qualifying</p>
@@ -109,35 +138,24 @@
           </div>
           <div class="feature-card">
             <p class="feature-title">Pit Stop Telemetry</p>
-            <p class="feature-body">Live pit stop data from the OpenF1 API for the most recent race of each season — total stops, average duration, fastest stop, and max stops per driver.</p>
+            <p class="feature-body">Live pit stop data from OpenF1 for the most recent race - total stops, average duration, fastest stop, and max stops per driver.</p>
           </div>
           <div class="feature-card">
-            <p class="feature-title">5 Analytics Charts</p>
-            <p class="feature-body">Championship battle (cumulative points), race wins by driver, constructor share donut, grid vs finish scatter, and positions gained/lost per race for the champion.</p>
+            <p class="feature-title">6 Analytics Charts</p>
+            <p class="feature-body">Championship battle, race wins, constructor points share, grid vs finish scatter, positions gained/lost, and teammate head-to-head - all interactive.</p>
+          </div>
+          <div class="feature-card">
+            <p class="feature-title">Lap Time Distribution</p>
+            <p class="feature-body">Per-race lap time box plots from OpenF1 for the top 8 finishers - medians, IQR, and outlier filtering built in. Available for 2023 onwards.</p>
+          </div>
+          <div class="feature-card">
+            <p class="feature-title">Champion vs Runner-up</p>
+            <p class="feature-body">Head-to-head comparison strip between the season champion and P2 - points, wins, poles, podiums, and race H2H with visual bar breakdowns.</p>
           </div>
           <div class="feature-card">
             <p class="feature-title">Dark Mode</p>
             <p class="feature-body">Full light/dark theme with system preference detection and localStorage persistence. Charts, tooltips, and all UI elements switch cleanly.</p>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <hr class="about-divider">
-
-    <!-- Built by -->
-    <section class="about-section">
-      <div class="about-section-label">
-        <p class="eyebrow">Built by</p>
-      </div>
-      <div class="about-section-content">
-        <h2 class="about-heading">Sudip <em>Shrestha</em></h2>
-        <p class="about-body">Data Analyst & AI Engineer based in Mississauga, ON. I build data pipelines, dashboards, and AI-powered systems. This project started as a personal exploration of public sports APIs and grew into a full analytics dashboard.</p>
-        <div class="about-links">
-          <a href="https://sudip70.github.io" class="about-link" target="_blank" rel="noopener">Portfolio →</a>
-          <a href="https://www.linkedin.com/in/sudipshrestha-58/" class="about-link" target="_blank" rel="noopener">LinkedIn →</a>
-          <a href="https://github.com/sudip70" class="about-link" target="_blank" rel="noopener">GitHub →</a>
-          <a href="mailto:sudipshrestha.ca@gmail.com" class="about-link" target="_blank" rel="noopener">Email →</a>
         </div>
       </div>
     </section>
@@ -150,15 +168,17 @@
         <p class="eyebrow">Stack</p>
       </div>
       <div class="about-section-content">
-        <h2 class="about-heading">Built with</h2>
-        <p class="about-body">Vanilla HTML, CSS, and JavaScript — no build step, no framework, no dependencies beyond Chart.js. Fonts from Google Fonts. Data from two public REST APIs with no authentication required.</p>
+        <h2 class="about-heading">Built <em>with</em></h2>
+        <p class="about-body">Vanilla HTML, CSS, and JavaScript - no build step, no framework, no bundler. Chart.js handles all six charts. Past seasons are stored in a Supabase PostgreSQL database seeded from the Jolpica API. The current season fetches live with parallel requests and automatic rate-limit retry. Fonts from Google Fonts.</p>
         <div class="tag-row">
           <span class="tag">HTML</span>
           <span class="tag">CSS</span>
           <span class="tag">JavaScript</span>
           <span class="tag">Chart.js</span>
+          <span class="tag">Supabase</span>
           <span class="tag">Jolpica F1 API</span>
           <span class="tag">OpenF1 API</span>
+          <span class="tag">GitHub Pages</span>
           <span class="tag">Lora</span>
           <span class="tag">JetBrains Mono</span>
         </div>
@@ -169,7 +189,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <span>Jolpica F1 API &amp; OpenF1 API</span>
+      <span>Jolpica F1 API &amp; OpenF1 API &amp; Supabase</span>
       <span id="footer-year"></span>
     </div>
   </footer>

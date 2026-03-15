@@ -1,11 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════
    F1. Analytics — app.js
-   Jolpica F1  →  race results, standings, qualifying
+   Jolpica F1  →  current season (live data)
+   Supabase    →  past seasons (2000–2024, fast & reliable)
    OpenF1      →  pit stop data
-
-   Run via a local server — cannot fetch from file:// URLs.
-   Quick start:  python3 -m http.server 8080
-                 npx serve .
 
    FIXES APPLIED (v2):
    [1]  document.currentScript → null-safe DOM check
@@ -32,8 +29,20 @@
    [18] Batch delay reduced from 300ms → 150ms
    [19] Batch size increased from 3 → 5 pages per batch
    [20] Adjacent seasons pre-fetched silently after render
+
+   DATA SOURCE (v5):
+   [21] Past seasons (< THIS_YEAR) fetched from Supabase — fast, no rate limits
+   [22] Current season fetched from Jolpica API — always live
 ═══════════════════════════════════════════════════════════════════ */
 'use strict';
+
+/* ─── Supabase client ────────────────────────────────────────────── */
+// FIX [21]: import Supabase via ESM CDN — no build step needed
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+const SUPABASE_URL = 'https://iavnlezplthsznnetjcv.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlhdm5sZXpwbHRoc3pubmV0amN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MjUxNTYsImV4cCI6MjA4OTEwMTE1Nn0.KRbQ8V77w5PBHAa3k1PYSBMHDAg1yjXza1np3BwIBLI';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ─── Config ─────────────────────────────────────────────────────── */
 const JOLPICA     = 'https://api.jolpi.ca/ergast/f1';
@@ -271,20 +280,125 @@ async function fetchQualifying(year, signal) {
     .sort((a, b) => parseInt(a.round) - parseInt(b.round));
 }
 
-/* ─── Load a full season ─────────────────────────────────────────── */
-async function loadSeason(year, signal) {
-  // FIX [2]: for the current/live season, bust the cache after TTL
-  const isLiveSeason = year === THIS_YEAR;
-  const now          = Date.now();
-  const expired      = !seasonCacheTime[year] || (now - seasonCacheTime[year] > CACHE_TTL);
+/* ─── Supabase season loader ─────────────────────────────────────── */
+// FIX [21]: past seasons fetched from Supabase — no rate limits, much faster
+async function loadSeasonFromDB(year) {
+  const [
+    { data: racesData },
+    { data: resultsData },
+    { data: qualData },
+    { data: driversData },
+    { data: constructorsData },
+  ] = await Promise.all([
+    supabase.from('races').select('*').eq('year', year).order('round'),
+    supabase.from('race_results').select('*').eq('year', year).order('round').order('pos'),
+    supabase.from('qualifying_results').select('*').eq('year', year).order('round').order('pos'),
+    supabase.from('driver_standings').select('*').eq('year', year).order('pos'),
+    supabase.from('constructor_standings').select('*').eq('year', year).order('pos'),
+  ]);
 
-  if (seasonCache[year] && !(isLiveSeason && expired)) {
-    return seasonCache[year];
-  }
+  // Group race results by round
+  const resultsByRound = {};
+  (resultsData || []).forEach(r => {
+    if (!resultsByRound[r.round]) resultsByRound[r.round] = [];
+    resultsByRound[r.round].push(r);
+  });
 
-  // PERF [17]: all four fetches run in parallel instead of sequentially.
-  // Results, standings, and qualifying are all independent so there's no
-  // reason to wait for one before starting the next.
+  // Group qualifying by round
+  const qualByRound = {};
+  (qualData || []).forEach(r => {
+    if (!qualByRound[r.round]) qualByRound[r.round] = [];
+    qualByRound[r.round].push(r);
+  });
+
+  // Build races array — same shape as Jolpica parser output
+  const races = (racesData || []).map(race => ({
+    round:   race.round,
+    name:    race.name,
+    circuit: race.circuit,
+    country: race.country,
+    date:    race.date,
+    winner:  race.winner,
+    team:    race.team,
+    grid:    race.grid,
+    laps:    race.laps,
+    time:    race.time,
+    allResults: (resultsByRound[race.round] || []).map(res => ({
+      pos:        res.pos,
+      name:       res.name,
+      code:       res.code,
+      team:       res.team,
+      grid:       res.grid,
+      fastestLap: res.fastest_lap,
+    })),
+  }));
+
+  // Build qualifying array
+  const qualifying = (racesData || []).map(race => ({
+    round:   race.round,
+    name:    race.name,
+    date:    race.date,
+    results: (qualByRound[race.round] || []).map(q => ({
+      pos:  q.pos,
+      name: q.name,
+      code: q.code,
+      team: q.team,
+      q1:   q.q1,
+      q2:   q.q2,
+      q3:   q.q3,
+    })),
+  }));
+
+  // Build drivers array
+  const drivers = (driversData || []).map(d => ({
+    pos:    d.pos,
+    name:   d.name,
+    code:   d.code,
+    nat:    d.nat,
+    team:   d.team,
+    points: d.points,
+    wins:   d.wins,
+  }));
+
+  // Build constructors array
+  const constructors = (constructorsData || []).map(c => ({
+    pos:    c.pos,
+    team:   c.team,
+    points: c.points,
+    wins:   c.wins,
+  }));
+
+  // Champion summary stats — same calculation as Jolpica path
+  const champDriver = drivers[0];
+  const champCode   = champDriver?.code || '';
+  const poles       = qualifying.filter(r => r.results[0]?.code === champCode).length;
+  const podiums     = races.reduce((n, r) =>
+    n + r.allResults.filter(res => res.pos <= 3 && res.code === champCode).length, 0);
+  const fastestLaps = races.reduce((n, r) =>
+    n + (r.allResults.find(res => res.fastestLap && res.code === champCode) ? 1 : 0), 0);
+
+  return {
+    year,
+    champion:    champDriver?.name   || '—',
+    champCode,
+    champTeam:   champDriver?.team   || '—',
+    champNat:    champDriver?.nat    || '—',
+    champWins:   champDriver?.wins   || 0,
+    champPoints: champDriver?.points || 0,
+    poles,
+    podiums,
+    fastestLaps,
+    totalRaces:  races.length,
+    races,
+    constructors,
+    drivers,
+    qualifying,
+  };
+}
+
+/* ─── Jolpica season loader (current year only) ──────────────────── */
+// FIX [22]: only called for THIS_YEAR — all other years use Supabase
+async function loadSeasonFromAPI(year, signal) {
   const [rawRaces, constructorRes, driverRes, rawQual] = await Promise.all([
     fetchRaceResults(year, signal),
     jolpicaFetch(`${year}/constructorstandings/`, signal),
@@ -371,7 +485,7 @@ async function loadSeason(year, signal) {
     return n + (fl?.Driver?.code === champCode ? 1 : 0);
   }, 0);
 
-  const seasonData = {
+  return {
     year,
     champion:    champDriver ? `${champDriver.givenName} ${champDriver.familyName}` : '—',
     champCode,
@@ -388,9 +502,25 @@ async function loadSeason(year, signal) {
     drivers,
     qualifying,
   };
+}
+
+/* ─── Load a full season ─────────────────────────────────────────── */
+// FIX [21][22]: route past seasons to Supabase, current year to Jolpica
+async function loadSeason(year, signal) {
+  const isLiveSeason = year === THIS_YEAR;
+  const now          = Date.now();
+  const expired      = !seasonCacheTime[year] || (now - seasonCacheTime[year] > CACHE_TTL);
+
+  if (seasonCache[year] && !(isLiveSeason && expired)) {
+    return seasonCache[year];
+  }
+
+  const seasonData = isLiveSeason
+    ? await loadSeasonFromAPI(year, signal)
+    : await loadSeasonFromDB(year);
 
   seasonCache[year]     = seasonData;
-  seasonCacheTime[year] = Date.now();   // FIX [2]: stamp the cache time
+  seasonCacheTime[year] = Date.now();
   return seasonData;
 }
 
@@ -1630,7 +1760,11 @@ async function fetchAndRender(year) {
 
   isLoading = true;
   setApiStatus('loading');
-  showLoading('FETCHING RACE DATA', `JOLPICA F1 — ${year}`);
+  // FIX [21]: show appropriate loading message based on data source
+  showLoading(
+    year === THIS_YEAR ? 'FETCHING LIVE DATA' : 'LOADING SEASON DATA',
+    year === THIS_YEAR ? `JOLPICA F1 — ${year}` : `SUPABASE — ${year}`
+  );
 
   try {
     const data = await loadSeason(year, signal);
@@ -1653,10 +1787,10 @@ async function fetchAndRender(year) {
     setApiStatus('error');
     // FIX [15]: friendly message for CORS / network errors
     showError(isCorsError(err)
-     ? (window.location.protocol === 'file://'
-         ? 'Network error — make sure you\'re running via a local server, not file://'
-         : 'Network error — the API may be temporarily unavailable. Please try again in a moment.')
-     : err);
+    ? (window.location.protocol === 'file://'
+        ? 'Network error — make sure you\'re running via a local server, not file://'
+        : 'Network error — the API may be temporarily unavailable. Please try again in a moment.')
+    : err);
   } finally {
     isLoading = false;
     buildSeasonBar();

@@ -570,9 +570,15 @@ html.dark .theme-icon-dark  { display: flex; }
   opacity: 0;
   animation: slideInL 0.42s ease forwards;
   cursor: pointer;
+  border-radius: var(--radius);
 }
-.race-row:hover    { background: var(--bg-subtle); }
-.race-row.expanded { background: var(--bg-subtle); }
+
+.race-row.expanded {
+  padding: 16px 12px;
+  margin-bottom: 0;
+}
+.race-row:hover    { background: var(--bg-subtle); padding: 16px 12px; }
+.race-row.expanded { background: var(--bg-subtle); padding: 16px 12px; }
 
 .race-num {
   font-family: var(--font-mono);
@@ -761,6 +767,8 @@ html.dark .theme-icon-dark  { display: flex; }
   max-height: 0;
   opacity: 0;
   border-bottom: 1px solid var(--border);
+  margin: 4px 0;
+  border-radius: var(--radius);
 }
 .race-drilldown.drilldown-open {
   animation: drilldownOpen 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -779,8 +787,9 @@ html.dark .theme-icon-dark  { display: flex; }
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
   gap: 0;
-  padding: 20px 0 8px;
+  padding: 24px 8px 16px;
   background: var(--bg-subtle);
+  border-radius: var(--radius);
 }
 @media (max-width: 600px) {
   .drilldown-inner { grid-template-columns: 1fr; }

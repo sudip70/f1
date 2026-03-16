@@ -397,7 +397,6 @@ async function loadSeasonFromDB(year) {
 }
 
 /* ─── Jolpica season loader (current year only) ──────────────────── */
-// FIX [22]: only called for THIS_YEAR — all other years use Supabase
 async function loadSeasonFromAPI(year, signal) {
   const [rawRaces, constructorRes, driverRes, rawQual] = await Promise.all([
     fetchRaceResults(year, signal),
@@ -505,7 +504,6 @@ async function loadSeasonFromAPI(year, signal) {
 }
 
 /* ─── Load a full season ─────────────────────────────────────────── */
-// FIX [21][22]: route past seasons to Supabase, current year to Jolpica
 async function loadSeason(year, signal) {
   const isLiveSeason = year === THIS_YEAR;
   const now          = Date.now();
@@ -515,9 +513,14 @@ async function loadSeason(year, signal) {
     return seasonCache[year];
   }
 
-  const seasonData = isLiveSeason
+  let seasonData = isLiveSeason
     ? await loadSeasonFromAPI(year, signal)
     : await loadSeasonFromDB(year);
+
+  if (!isLiveSeason && (!seasonData.races || seasonData.races.length === 0)) {
+    console.warn(`No Supabase data for ${year}, falling back to Jolpica`);
+    seasonData = await loadSeasonFromAPI(year, signal);
+  }
 
   seasonCache[year]     = seasonData;
   seasonCacheTime[year] = Date.now();
@@ -1384,6 +1387,11 @@ function renderDrilldown(round, data) {
   const race     = data.races.find(r => r.round === round);
   const qualRace = data.qualifying.find(r => r.round === round);
 
+  // Generate track image slug from circuit name e.g. "Suzuka Circuit" → "suzuka-circuit"
+  const trackSlug = (race.circuit || '').toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
+
   const qualRows = qualRace?.results.length
     ? qualRace.results.slice(0, 10).map(q => `
         <div class="drilldown-row">
@@ -1409,6 +1417,14 @@ function renderDrilldown(round, data) {
       <div class="drilldown-col">
         <p class="drilldown-col-title">Qualifying</p>
         ${qualRows}
+        <div class="drilldown-track-wrap">
+          <img
+            src="image/tracks/${trackSlug}.svg"
+            alt="${race.circuit}"
+            class="drilldown-track-img"
+            onerror="this.style.display='none'"
+          />
+        </div>
       </div>
       <div class="drilldown-divider"></div>
       <div class="drilldown-col drilldown-col-race">
@@ -1692,9 +1708,7 @@ function renderSeason(data) {
       if (carEl) {
         carEl.style.display = 'block';
         carEl.style.opacity = '0';
-        requestAnimationFrame(() => {
-          carEl.style.animation = 'carDriveIn 1s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards';
-        });
+        carEl.style.animation = 'carDriveIn 1s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards';
       }
     }, carDelay);
 

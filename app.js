@@ -33,11 +33,15 @@
    DATA SOURCE (v5):
    [21] Past seasons (< THIS_YEAR) fetched from Supabase — fast, no rate limits
    [22] Current season fetched from Jolpica API — always live
+
+   DRILLDOWN (v6):
+   [23] Replaced OpenF1 lap time box plot with synchronous Grid→Finish slope chart
+        — works for all seasons back to 2000, zero new API calls
+        — lines/dots coloured by team, delta text green/red for gained/lost
 ═══════════════════════════════════════════════════════════════════ */
 'use strict';
 
 /* ─── Supabase client ────────────────────────────────────────────── */
-// FIX [21]: import Supabase via ESM CDN — no build step needed
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
 const SUPABASE_URL = 'https://iavnlezplthsznnetjcv.supabase.co';
@@ -47,8 +51,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 /* ─── Config ─────────────────────────────────────────────────────── */
 const JOLPICA     = 'https://api.jolpi.ca/ergast/f1';
 const OPENF1      = 'https://api.openf1.org/v1';
-const CACHE_TTL   = 5 * 60 * 1000;           // 5 minutes — for live/current season
-// FIX [11]: derive dynamically so the app stays current every year
+const CACHE_TTL   = 5 * 60 * 1000;
 const THIS_YEAR   = new Date().getFullYear();
 const SEASONS     = Array.from({ length: THIS_YEAR - 1999 }, (_, i) => THIS_YEAR - i);
 
@@ -84,7 +87,6 @@ const TEAM_COLORS = {
   'Marussia':        '#580000', 'Manor Marussia': '#580000',
 };
 
-// FIX [12]: memoize teamColor to avoid re-scanning the map on every call
 const _teamColorCache = {};
 function teamColor(name) {
   if (!name) return '#aaa';
@@ -100,9 +102,9 @@ function teamColor(name) {
 
 /* ─── Historical points systems ──────────────────────────────────── */
 const PTS_SYSTEMS = {
-  modern:  [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], // 2010+
-  mid:     [10,  8,  6,  5,  4, 3, 2, 1],        // 2003–2009
-  classic: [10,  6,  4,  3,  2, 1],              // 2000–2002
+  modern:  [25, 18, 15, 12, 10, 8, 6, 4, 2, 1],
+  mid:     [10,  8,  6,  5,  4, 3, 2, 1],
+  classic: [10,  6,  4,  3,  2, 1],
 };
 
 function getPoints(position, year) {
@@ -111,25 +113,20 @@ function getPoints(position, year) {
             : PTS_SYSTEMS.classic;
   return sys[position - 1] || 0;
 }
-// NOTE [6]: Sprint race bonus points (2021+) are NOT included in the points
-// progression chart — they require a separate /sprint/ endpoint call per round.
-// Cumulative totals for 2021+ seasons will be slightly lower than official standings.
-// To fix: fetch `jolpicaFetch(`${year}/sprint/`)` and merge into allResults.
 
 /* ─── State ──────────────────────────────────────────────────────── */
-let currentSeason         = THIS_YEAR - 1;      // default to last completed season
+let currentSeason         = THIS_YEAR - 1;
 let currentTab            = 'races';
 let seasonCache           = {};
-let seasonCacheTime       = {};                  // FIX [2]: TTL timestamps per season
+let seasonCacheTime       = {};
 let chartInstances        = {};
 let isLoading             = false;
 let typewriterTimer       = null;
-let renderGeneration      = 0;                   // FIX [3]: stale chart render guard
-let activeFetchController = null;               // FIX [8]: abort controller
-let expandedRound         = null;               // race drill-down: currently open round
+let renderGeneration      = 0;
+let activeFetchController = null;
+let expandedRound         = null;
 
 /* ─── Fetch helpers ──────────────────────────────────────────────── */
-// FIX [15]: wired into fetchAndRender catch block for a friendly error message
 function isCorsError(err) {
   return err instanceof TypeError && (
     err.message === 'Failed to fetch' ||
@@ -140,8 +137,6 @@ function isCorsError(err) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// FIX [8]: accept an AbortSignal so in-flight requests can be cancelled
-// Retry up to 3 times on 429 with exponential backoff (1s, 2s, 4s)
 async function jolpicaFetch(path, signal, _attempt = 0) {
   const res = await fetch(`${JOLPICA}/${path}`, { signal });
   if (res.status === 429) {
@@ -154,14 +149,11 @@ async function jolpicaFetch(path, signal, _attempt = 0) {
   return res.json();
 }
 
-// PERF [18][19]: batch size 5, delay 150ms — faster than original 3/300ms
-// while still staying within Jolpica rate limits.
-// onProgress(fetched, total) is called after each batch for live UI updates.
 async function jolpicaFetchBatched(paths, signal, onProgress) {
-  const BATCH = 5;   // PERF [19]: increased from 3
+  const BATCH = 5;
   const results = [];
   for (let i = 0; i < paths.length; i += BATCH) {
-    if (i > 0) await sleep(150);  // PERF [18]: reduced from 300ms
+    if (i > 0) await sleep(150);
     const batch = paths.slice(i, i + BATCH);
     const pages = await Promise.all(batch.map(p => jolpicaFetch(p, signal)));
     results.push(...pages);
@@ -176,51 +168,7 @@ async function openf1Fetch(path) {
   return res.json();
 }
 
-/* ─── Lap time helpers ───────────────────────────────────────────── */
-function computeQuartiles(arr) {
-  if (!arr.length) return null;
-  const s = [...arr].sort((a, b) => a - b);
-  const n = s.length;
-  return {
-    min: s[0],
-    q1:  s[Math.floor(n * 0.25)],
-    med: s[Math.floor(n * 0.50)],
-    q3:  s[Math.floor(n * 0.75)],
-    max: s[n - 1],
-  };
-}
-
-// Fetch lap times + driver map for one race from OpenF1 (on-demand)
-async function fetchRaceLapTimes(year, round, raceDate) {
-  try {
-    const sessions = await openf1Fetch(`sessions?year=${year}&session_name=Race`);
-    // Match by date first (most reliable), fall back to array index
-    const session = sessions.find(s => s.date_start?.startsWith(raceDate))
-                 || sessions[round - 1];
-    if (!session) throw new Error('session not found');
-
-    const [laps, of1Drivers] = await Promise.all([
-      openf1Fetch(`laps?session_key=${session.session_key}`),
-      openf1Fetch(`drivers?session_key=${session.session_key}`),
-    ]);
-
-    // Build driver_number → code map
-    const numToCode = {};
-    of1Drivers.forEach(d => { numToCode[d.driver_number] = d.name_acronym; });
-
-    return { session, laps, numToCode };
-  } catch (err) {
-    console.warn('Lap time fetch failed:', err.message);
-    return null;
-  }
-}
-
-/* ─── Paginated race results fetch ───────────────────────────────────
-   Jolpica caps each page at 30 rows regardless of `limit`.
-   Each row is ONE driver result, not one race.
-   A 24-race season ≈ 480 rows (24 × 20 drivers).
-   The same round can be split across pages, so we merge by round number.
-─────────────────────────────────────────────────────────────────── */
+/* ─── Paginated race results fetch ───────────────────────────────── */
 async function fetchRaceResults(year, signal) {
   const PAGE = 30;
   const first = await jolpicaFetch(`${year}/results/?limit=${PAGE}&offset=0`, signal);
@@ -250,7 +198,7 @@ async function fetchRaceResults(year, signal) {
     .sort((a, b) => parseInt(a.round) - parseInt(b.round));
 }
 
-/* ─── Paginated qualifying fetch (same merge strategy) ───────────── */
+/* ─── Paginated qualifying fetch ────────────────────────────────── */
 async function fetchQualifying(year, signal) {
   const PAGE = 30;
   const first = await jolpicaFetch(`${year}/qualifying/?limit=${PAGE}&offset=0`, signal);
@@ -281,7 +229,6 @@ async function fetchQualifying(year, signal) {
 }
 
 /* ─── Supabase season loader ─────────────────────────────────────── */
-// FIX [21]: past seasons fetched from Supabase — no rate limits, much faster
 async function loadSeasonFromDB(year) {
   const [
     { data: racesData },
@@ -297,21 +244,18 @@ async function loadSeasonFromDB(year) {
     supabase.from('constructor_standings').select('*').eq('year', year).order('pos'),
   ]);
 
-  // Group race results by round
   const resultsByRound = {};
   (resultsData || []).forEach(r => {
     if (!resultsByRound[r.round]) resultsByRound[r.round] = [];
     resultsByRound[r.round].push(r);
   });
 
-  // Group qualifying by round
   const qualByRound = {};
   (qualData || []).forEach(r => {
     if (!qualByRound[r.round]) qualByRound[r.round] = [];
     qualByRound[r.round].push(r);
   });
 
-  // Build races array — same shape as Jolpica parser output
   const races = (racesData || []).map(race => ({
     round:   race.round,
     name:    race.name,
@@ -333,7 +277,6 @@ async function loadSeasonFromDB(year) {
     })),
   }));
 
-  // Build qualifying array
   const qualifying = (racesData || []).map(race => ({
     round:   race.round,
     name:    race.name,
@@ -349,7 +292,6 @@ async function loadSeasonFromDB(year) {
     })),
   }));
 
-  // Build drivers array
   const drivers = (driversData || []).map(d => ({
     pos:    d.pos,
     name:   d.name,
@@ -360,7 +302,6 @@ async function loadSeasonFromDB(year) {
     wins:   d.wins,
   }));
 
-  // Build constructors array
   const constructors = (constructorsData || []).map(c => ({
     pos:    c.pos,
     team:   c.team,
@@ -368,7 +309,6 @@ async function loadSeasonFromDB(year) {
     wins:   c.wins,
   }));
 
-  // Champion summary stats — same calculation as Jolpica path
   const champDriver = drivers[0];
   const champCode   = champDriver?.code || '';
   const poles       = qualifying.filter(r => r.results[0]?.code === champCode).length;
@@ -405,7 +345,6 @@ async function loadSeasonFromAPI(year, signal) {
     fetchQualifying(year, signal),
   ]);
 
-  // Parse races
   const races = rawRaces.map(r => {
     const top = r.Results?.[0] || {};
     return {
@@ -430,7 +369,6 @@ async function loadSeasonFromAPI(year, signal) {
     };
   });
 
-  // Parse constructor standings
   const cStandings   = constructorRes.MRData.StandingsTable.StandingsLists?.[0];
   const constructors = (cStandings?.ConstructorStandings || []).map(c => ({
     pos:    parseInt(c.position),
@@ -439,7 +377,6 @@ async function loadSeasonFromAPI(year, signal) {
     wins:   parseInt(c.wins),
   }));
 
-  // Parse driver standings
   const dStandings = driverRes.MRData.StandingsTable.StandingsLists?.[0];
   const champion   = dStandings?.DriverStandings?.[0];
   const drivers    = (dStandings?.DriverStandings || []).map(d => ({
@@ -452,7 +389,6 @@ async function loadSeasonFromAPI(year, signal) {
     wins:   parseInt(d.wins),
   }));
 
-  // Parse qualifying
   const qualifying = rawQual.map(r => ({
     round: parseInt(r.round),
     name:  r.raceName.replace(' Grand Prix', ' GP'),
@@ -470,7 +406,6 @@ async function loadSeasonFromAPI(year, signal) {
       })),
   }));
 
-  // Champion summary stats
   const champDriver = champion?.Driver;
   const champTeam   = champion?.Constructors?.[0];
   const champCode   = champDriver?.code || '';
@@ -839,108 +774,7 @@ function buildGainLossChart(canvasId, data) {
   });
 }
 
-/* ─── Lap time box plot (used inside race drill-down) ────────────── */
-function buildLapBoxPlotChart(canvasId, laps, numToCode, raceResults) {
-  const ctx = document.getElementById(canvasId);
-  if (!ctx) return;
-
-  const top8  = raceResults.slice(0, 8);
-  const grid  = chartGridColor();
-  const ticks = chartTickColor();
-
-  // Group lap durations by driver code, skip lap 1 + outliers
-  const byCode = {};
-  laps.forEach(lap => {
-    const code = numToCode[lap.driver_number];
-    if (!code || !lap.lap_duration || lap.lap_duration <= 0 || lap.lap_number === 1) return;
-    if (!byCode[code]) byCode[code] = [];
-    byCode[code].push(lap.lap_duration);
-  });
-
-  // Strip pit-stop laps (> 1.3× per-driver median)
-  Object.keys(byCode).forEach(code => {
-    const arr = [...byCode[code]].sort((a, b) => a - b);
-    const med = arr[Math.floor(arr.length * 0.5)] || 999;
-    byCode[code] = arr.filter(t => t < med * 1.3);
-  });
-
-  const labels = [], iqrData = [], medData = [], colors = [];
-
-  top8.forEach(res => {
-    const times = byCode[res.code] || [];
-    if (times.length < 3) return;
-    const q = computeQuartiles(times);
-    labels.push(res.code || `P${res.pos}`);
-    iqrData.push([q.q1, q.q3]);
-    medData.push(q.med);
-    colors.push(teamColor(res.team));
-  });
-
-  if (chartInstances[`lapbox_${canvasId}`]) {
-    try { chartInstances[`lapbox_${canvasId}`].destroy(); } catch (_) {}
-  }
-
-  chartInstances[`lapbox_${canvasId}`] = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          // IQR box: Q1 → Q3 as floating bar
-          label:           'IQR (Q1–Q3)',
-          type:            'bar',
-          data:            iqrData,
-          backgroundColor: colors.map(c => c + '44'),
-          borderColor:     colors,
-          borderWidth:     1.5,
-          borderRadius:    3,
-          barPercentage:   0.5,
-        },
-        {
-          // Median as a floating point (line type, showLine false)
-          label:                'Median',
-          type:                 'line',
-          data:                 medData,
-          showLine:             false,
-          pointBackgroundColor: colors,
-          pointBorderColor:     colors,
-          pointRadius:          5,
-          pointHoverRadius:     7,
-        },
-      ],
-    },
-    options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          ...tooltipOptions(),
-          callbacks: {
-            label: c => {
-              if (c.datasetIndex === 0) {
-                const [q1, q3] = c.raw;
-                return `  Q1 ${q1.toFixed(2)}s  ·  Q3 ${q3.toFixed(2)}s`;
-              }
-              return `  Median ${c.raw.toFixed(2)}s`;
-            },
-          },
-        },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { color: ticks } },
-        y: {
-          grid:  { color: grid },
-          ticks: { color: ticks, callback: v => v.toFixed(0) + 's' },
-          title: { display: true, text: 'Lap time (s)', color: ticks, font: { size: 9 } },
-        },
-      },
-    },
-  });
-}
-
 /* ─── Teammate head-to-head diverging bar chart ──────────────────── */
-// FIX [16]: removed unused d1Qual / d2Qual qualifying H2H variables
 function buildTeammateComparisonData(data) {
   const teamMap = {};
   data.drivers.forEach(d => {
@@ -953,7 +787,6 @@ function buildTeammateComparisonData(data) {
     .map(([team, drivers]) => {
       const [d1, d2] = drivers.slice(0, 2);
 
-      // Race H2H — both must have classified finish (pos < 19)
       let d1Race = 0, d2Race = 0;
       data.races.forEach(race => {
         const r1 = race.allResults.find(r => r.code === d1.code || r.name === d1.name);
@@ -984,7 +817,6 @@ function buildTeammateComparisonChart(canvasId, data) {
       labels: pairs.map(p => p.team.replace('F1 Team', '').replace(' Racing', '').trim()),
       datasets: [
         {
-          // Driver 1 bars extend RIGHT (positive)
           label:           'Driver 1',
           data:            pairs.map(p => p.d1Race),
           backgroundColor: pairs.map(p => teamColor(p.team) + 'cc'),
@@ -994,7 +826,6 @@ function buildTeammateComparisonChart(canvasId, data) {
           stack:           'h2h',
         },
         {
-          // Driver 2 bars extend LEFT (negative)
           label:           'Driver 2',
           data:            pairs.map(p => -p.d2Race),
           backgroundColor: pairs.map(p => teamColor(p.team) + '44'),
@@ -1133,7 +964,6 @@ async function loadPitData(year, el) {
       `).join('')}
     `;
   } catch (err) {
-    // FIX [7]: log instead of silently swallowing
     console.warn('OpenF1 pit data unavailable:', err.message);
     el.innerHTML = `
       <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
@@ -1143,7 +973,6 @@ async function loadPitData(year, el) {
 }
 
 /* ─── Animations ─────────────────────────────────────────────────── */
-// FIX [9]: guard against 0 / falsy target — prevents NaN output
 function animateCount(el, target, duration) {
   if (!target) { el.textContent = 0; return; }
   const isFloat = !Number.isInteger(target);
@@ -1300,8 +1129,6 @@ function getTabContent(data) {
 }
 
 /* ─── Right column sub-renderers ─────────────────────────────────── */
-// FIX [13]: split renderRightColumn into focused helpers
-
 function renderConstructorList(data) {
   const maxPts = Math.max(...data.constructors.map(c => c.points), 1);
   return `
@@ -1382,12 +1209,103 @@ function renderRightColumn(data) {
   `;
 }
 
+/* ─── Grid → Finish slope chart [23] ────────────────────────────── */
+// Renders synchronously from existing race data — no API calls needed.
+// Lines and dots are coloured by team; delta text is green/red for gained/lost.
+function renderSlopeChart(race) {
+  const allRes = (race.allResults || [])
+    .filter(r => r.grid > 0)
+    .sort((a, b) => a.pos - b.pos);
+
+  if (!allRes.length) return '<p class="drilldown-empty">No grid data available</p>';
+
+  const LEFT_X  = 75;
+  const RIGHT_X = 600;
+  const Y_TOP   = 52;
+  const Y_STEP  = 28;
+
+  const byGrid   = [...allRes].sort((a, b) => a.grid - b.grid);
+  const byFinish = [...allRes].sort((a, b) => a.pos  - b.pos);
+
+  const gridYMap = {}, finishYMap = {};
+  byGrid.forEach((r, i)   => { gridYMap[r.code   || r.name] = Y_TOP + i * Y_STEP; });
+  byFinish.forEach((r, i) => { finishYMap[r.code || r.name] = Y_TOP + i * Y_STEP; });
+
+  function dotLineColor(res) {
+    if (res.pos >= 19) return '#E24B4A';
+    return teamColor(res.team);
+  }
+  function deltaColor(res) {
+    if (res.pos >= 19) return '#E24B4A';
+    const d = res.grid - res.pos;
+    return d > 0 ? '#1D9E75' : d === 0 ? '#888780' : '#D85A30';
+  }
+
+  const totalHeight = Y_TOP + byGrid.length * Y_STEP + 24;
+
+  const svgLines = byGrid.map(res => {
+    const key    = res.code || res.name;
+    const yL     = gridYMap[key];
+    const yR     = finishYMap[key];
+    const col    = dotLineColor(res);
+    const isDnf  = res.pos >= 19;
+    const gained = res.grid - res.pos;
+    return `<line x1="${LEFT_X}" y1="${yL}" x2="${RIGHT_X}" y2="${yR}"
+      stroke="${col}" stroke-width="${gained > 3 ? 2.5 : 1.8}"
+      opacity="${isDnf ? 0.45 : 0.75}"
+      ${isDnf ? 'stroke-dasharray="4 3"' : ''}/>`;
+  }).join('');
+
+  const leftLabels = byGrid.map(res => {
+    const yL      = gridYMap[res.code || res.name];
+    const col     = dotLineColor(res);
+    const surname = (res.code || (res.name || '').split(' ').pop() || '').slice(0, 3).toUpperCase();
+    return `
+      <circle cx="${LEFT_X}" cy="${yL}" r="4.5" fill="${col}"/>
+      <text x="${LEFT_X - 16}" y="${yL + 5}" text-anchor="end"
+        style="font-family:var(--font-mono);font-size:14px;fill:var(--text-4)">${res.grid}</text>
+      <text x="${LEFT_X - 38}" y="${yL + 5}" text-anchor="end"
+        style="font-family:var(--font-mono);font-size:18px;font-weight:500;fill:var(--text-2)">${surname}</text>`;
+  }).join('');
+
+  const rightLabels = byFinish.map(res => {
+    const yR       = finishYMap[res.code || res.name];
+    const col      = dotLineColor(res);
+    const dcol     = deltaColor(res);
+    const isDnf    = res.pos >= 19;
+    const delta    = res.grid - res.pos;
+    const deltaStr = isDnf ? 'DNF' : delta > 0 ? `+${delta}` : delta === 0 ? '—' : `${delta}`;
+    return `
+      <circle cx="${RIGHT_X}" cy="${yR}" r="4.5" fill="${col}"/>
+      <text x="${RIGHT_X + 16}" y="${yR + 5}" text-anchor="start"
+        style="font-family:var(--font-mono);font-size:14px;fill:var(--text-4)">${isDnf ? '--' : res.pos}</text>
+      <text x="${RIGHT_X + 42}" y="${yR + 5}" text-anchor="start"
+        style="font-family:var(--font-mono);font-size:18px;font-weight:500;fill:${dcol}">${deltaStr}</text>`;
+  }).join('');
+
+  return `
+    <div style="padding:8px 8px 8px 8px">
+      <svg width="100%" viewBox="0 0 700 ${totalHeight}" style="display:block;overflow:visible">
+        <line x1="${LEFT_X}"  y1="${Y_TOP - 16}" x2="${LEFT_X}"  y2="${totalHeight - 36}"
+          stroke="var(--border)" stroke-width="0.5"/>
+        <line x1="${RIGHT_X}" y1="${Y_TOP - 16}" x2="${RIGHT_X}" y2="${totalHeight - 36}"
+          stroke="var(--border)" stroke-width="0.5"/>
+        <text x="${LEFT_X}"  y="${Y_TOP - 24}" text-anchor="middle"
+          style="font-family:var(--font-mono);font-size:14px;letter-spacing:2.5px;fill:var(--text-4)">GRID</text>
+        <text x="${RIGHT_X}" y="${Y_TOP - 24}" text-anchor="middle"
+          style="font-family:var(--font-mono);font-size:14px;letter-spacing:2.5px;fill:var(--text-4)">FINISH</text>
+        ${svgLines}
+        ${leftLabels}
+        ${rightLabels}
+      </svg>
+    </div>`;
+}
+
 /* ─── Race drill-down ────────────────────────────────────────────── */
 function renderDrilldown(round, data) {
   const race     = data.races.find(r => r.round === round);
   const qualRace = data.qualifying.find(r => r.round === round);
 
-  // Generate track image slug from circuit name e.g. "Suzuka Circuit" → "suzuka-circuit"
   const trackSlug = (race.circuit || '').toLowerCase()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9-]/g, '');
@@ -1412,12 +1330,13 @@ function renderDrilldown(round, data) {
     </div>
   `).join('');
 
-  return `
+return `
     <div class="drilldown-inner">
       <div class="drilldown-col">
         <p class="drilldown-col-title">Qualifying</p>
         ${qualRows}
-        <div class="drilldown-track-wrap">
+        <div class="drilldown-track-wrap" style="flex-direction:column;align-items:flex-start;border-top:none;margin-top:12px">
+          <p class="drilldown-col-title" style="margin-bottom:12px;color:var(--text-2);border:none">${race.circuit} — ${race.country}</p>
           <img
             src="image/tracks/${trackSlug}.svg"
             alt="${race.circuit}"
@@ -1431,46 +1350,17 @@ function renderDrilldown(round, data) {
         <p class="drilldown-col-title">Race — Top 10</p>
         ${raceRows}
         <div class="drilldown-lap-section">
-          <p class="drilldown-col-title" style="margin-top:20px">Lap Time Distribution</p>
-          <p class="drilldown-lap-loading">Loading OpenF1 data…</p>
-          <div class="drilldown-lap-chart" style="display:none;height:220px">
-            <canvas id="ch-lapbox-${round}"></canvas>
-          </div>
+          <p class="drilldown-col-title" style="margin-top:24px;color:var(--text-2)"">Grid → Finish</p>
+          ${renderSlopeChart(race)}
         </div>
       </div>
     </div>
   `;
 }
 
-async function loadDrilldownLapChart(race, data) {
-  const section   = document.querySelector(`#drilldown-${race.round} .drilldown-lap-section`);
-  const loadingEl = section?.querySelector('.drilldown-lap-loading');
-  const chartWrap = section?.querySelector('.drilldown-lap-chart');
-  if (!section) return;
-
-  const result = await fetchRaceLapTimes(data.year, race.round, race.date);
-
-  if (!result || !result.laps.length) {
-    if (loadingEl) loadingEl.textContent = 'Lap data unavailable for this race';
-    return;
-  }
-
-  if (loadingEl) loadingEl.style.display = 'none';
-  if (chartWrap) chartWrap.style.display = 'block';
-
-  setChartDefaults();
-  buildLapBoxPlotChart(
-    `ch-lapbox-${race.round}`,
-    result.laps,
-    result.numToCode,
-    race.allResults.slice(0, 8)
-  );
-}
-
 function toggleRaceExpand(round, data) {
   const existing = document.getElementById(`drilldown-${round}`);
 
-  // Collapse if already open
   if (existing) {
     existing.classList.add('drilldown-closing');
     setTimeout(() => existing.remove(), 220);
@@ -1479,7 +1369,6 @@ function toggleRaceExpand(round, data) {
     return;
   }
 
-  // Close any previously open panel
   if (expandedRound !== null) {
     const prev = document.getElementById(`drilldown-${expandedRound}`);
     if (prev) { prev.classList.add('drilldown-closing'); setTimeout(() => prev.remove(), 220); }
@@ -1497,15 +1386,9 @@ function toggleRaceExpand(round, data) {
   panel.innerHTML = renderDrilldown(round, data);
   rowEl.insertAdjacentElement('afterend', panel);
 
-  // Trigger open animation on next frame
   requestAnimationFrame(() => panel.classList.add('drilldown-open'));
-
-  // Non-blocking: load lap chart
-  const race = data.races.find(r => r.round === round);
-  if (race) loadDrilldownLapChart(race, data);
 }
 
-// Wire click handlers on all race rows — called after any tab content render
 function wireRaceRowClicks(data) {
   if (currentTab !== 'races') return;
   document.querySelectorAll('.race-row[data-round]').forEach(row => {
@@ -1524,7 +1407,6 @@ function renderChampVsRunnerUp(data) {
   const cc     = teamColor(champ.team);
   const rc     = teamColor(runner.team);
 
-  // Race H2H — both must have a classified finish
   let champAhead = 0, runnerAhead = 0;
   data.races.forEach(race => {
     const r1 = race.allResults.find(r => r.code === champ.code  || r.name === champ.name);
@@ -1534,7 +1416,6 @@ function renderChampVsRunnerUp(data) {
     }
   });
 
-  // Runner-up poles + podiums (champion values already in data)
   const runnerPoles   = data.qualifying.filter(r => r.results[0]?.code === runner.code).length;
   const runnerPodiums = data.races.reduce((n, r) =>
     n + (r.allResults || []).filter(res =>
@@ -1653,10 +1534,8 @@ function renderMetricsGrid(data) {
 }
 
 /* ─── Main render ────────────────────────────────────────────────── */
-// FIX [13]: renderSeason delegates to focused sub-renderers
-// FIX [4] & [5]: tabs use data-tab attribute; events wired via addEventListener
 function renderSeason(data) {
-  expandedRound = null; // reset drill-down on season change
+  expandedRound = null;
   const { html: metricsHtml, metrics } = renderMetricsGrid(data);
 
   document.getElementById('content').innerHTML = `
@@ -1679,12 +1558,10 @@ function renderSeason(data) {
     </div>
   `;
 
-  // Wire tab buttons
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // Wire race row clicks (keyboard too)
   wireRaceRowClicks(data);
   document.querySelectorAll('.race-row[data-round]').forEach(row => {
     row.addEventListener('keydown', e => {
@@ -1695,13 +1572,11 @@ function renderSeason(data) {
     });
   });
 
-  // Typewriter + car animation + metric counters
   requestAnimationFrame(() => {
     const nameEl   = document.getElementById('hero-name');
     const cursorEl = document.getElementById('hero-cursor');
     if (nameEl && cursorEl) typewriteChampion(nameEl, cursorEl, data.champion);
 
-    // Car stays hidden (display:none) until typewriter finishes
     const carDelay = 80 + (data.champion.length * 42) + 300;
     setTimeout(() => {
       const carEl = document.querySelector('.hero-car');
@@ -1729,7 +1604,7 @@ function renderSeason(data) {
 /* ─── Tab switching ──────────────────────────────────────────────── */
 function switchTab(tab) {
   currentTab    = tab;
-  expandedRound = null; // close any open drill-down when switching tabs
+  expandedRound = null;
   const data = seasonCache[currentSeason];
   if (!data) return;
 
@@ -1743,7 +1618,6 @@ function switchTab(tab) {
     setTimeout(() => {
       tabEl.innerHTML     = getTabContent(data);
       tabEl.style.cssText = 'opacity:1;transform:translateY(0);transition:opacity .2s,transform .2s';
-      // Re-wire race row clicks every time the Races tab renders
       wireRaceRowClicks(data);
       document.querySelectorAll('.race-row[data-round]').forEach(row => {
         row.addEventListener('keydown', e => {
@@ -1767,14 +1641,12 @@ async function selectSeason(year) {
 }
 
 async function fetchAndRender(year) {
-  // FIX [8]: cancel any in-flight fetch from a previous season selection
   if (activeFetchController) activeFetchController.abort();
   activeFetchController = new AbortController();
   const { signal } = activeFetchController;
 
   isLoading = true;
   setApiStatus('loading');
-  // FIX [21]: show appropriate loading message based on data source
   showLoading(
     year === THIS_YEAR ? 'FETCHING LIVE DATA' : 'LOADING SEASON DATA',
     year === THIS_YEAR ? `JOLPICA F1 — ${year}` : `SUPABASE — ${year}`
@@ -1785,8 +1657,6 @@ async function fetchAndRender(year) {
     setApiStatus('live');
     renderSeason(data);
 
-    // PERF [20]: pre-fetch adjacent seasons silently after render
-    // so clicking prev/next year feels instant
     const adjacent = [year - 1, year + 1].filter(
       y => y >= 2000 && y <= THIS_YEAR && !seasonCache[y]
     );
@@ -1796,10 +1666,9 @@ async function fetchAndRender(year) {
     });
 
   } catch (err) {
-    if (err.name === 'AbortError') return; // FIX [8]: silently ignore cancelled requests
+    if (err.name === 'AbortError') return;
     console.error(err);
     setApiStatus('error');
-    // FIX [15]: friendly message for CORS / network errors
     showError(isCorsError(err)
     ? (window.location.protocol === 'file://'
         ? 'Network error — make sure you\'re running via a local server, not file://'
@@ -1822,7 +1691,6 @@ function buildSeasonBar() {
     >${yr}</button>
   `).join('');
 
-  // FIX [5]: wire season buttons with addEventListener
   document.querySelectorAll('.season-btn').forEach(btn => {
     btn.addEventListener('click', () => selectSeason(parseInt(btn.dataset.year)));
   });
@@ -1869,8 +1737,6 @@ if (_footerYear) _footerYear.textContent = `© ${new Date().getFullYear()} Sudip
 const _themeToggle = document.getElementById('theme-toggle');
 if (_themeToggle) _themeToggle.addEventListener('click', toggleTheme);
 
-// FIX [1]: document.currentScript is null after script finishes parsing —
-// check the DOM directly instead
 const isStaticPage = !document.getElementById('season-bar');
 
 if (!isStaticPage) {

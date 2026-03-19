@@ -2,7 +2,6 @@
    F1. Analytics — app.js
    Jolpica F1  →  current season (live data)
    Supabase    →  past seasons (2000–2024, fast & reliable)
-   OpenF1      →  pit stop data
 
    FIXES APPLIED (v2):
    [1]  document.currentScript → null-safe DOM check
@@ -38,6 +37,12 @@
    [23] Replaced OpenF1 lap time box plot with synchronous Grid→Finish slope chart
         — works for all seasons back to 2000, zero new API calls
         — lines/dots coloured by team, delta text green/red for gained/lost
+
+   RIGHT COLUMN (v7):
+   [24] Replaced OpenF1 pit stop block with Season Records
+        — derived entirely from existing season data, no API calls
+        — most positions gained, win streak, most DNFs, most poles, 1-2 finish
+        — removed openf1Fetch and loadPitData (dead code)
 ═══════════════════════════════════════════════════════════════════ */
 'use strict';
 
@@ -49,11 +54,10 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ─── Config ─────────────────────────────────────────────────────── */
-const JOLPICA     = 'https://api.jolpi.ca/ergast/f1';
-const OPENF1      = 'https://api.openf1.org/v1';
-const CACHE_TTL   = 5 * 60 * 1000;
-const THIS_YEAR   = new Date().getFullYear();
-const SEASONS     = Array.from({ length: THIS_YEAR - 1999 }, (_, i) => THIS_YEAR - i);
+const JOLPICA   = 'https://api.jolpi.ca/ergast/f1';
+const CACHE_TTL = 5 * 60 * 1000;
+const THIS_YEAR = new Date().getFullYear();
+const SEASONS   = Array.from({ length: THIS_YEAR - 1999 }, (_, i) => THIS_YEAR - i);
 
 /* ─── Team colours ───────────────────────────────────────────────── */
 const TEAM_COLORS = {
@@ -160,12 +164,6 @@ async function jolpicaFetchBatched(paths, signal, onProgress) {
     if (onProgress) onProgress(results.length, paths.length);
   }
   return results;
-}
-
-async function openf1Fetch(path) {
-  const res = await fetch(`${OPENF1}/${path}`);
-  if (!res.ok) throw new Error(`OpenF1 ${res.status}: ${path}`);
-  return res.json();
 }
 
 /* ─── Paginated race results fetch ───────────────────────────────── */
@@ -928,50 +926,6 @@ function renderCharts(data) {
   });
 }
 
-/* ─── OpenF1 pit data (non-blocking) ────────────────────────────── */
-async function loadPitData(year, el) {
-  try {
-    const sessions = await openf1Fetch(`sessions?year=${year}&session_name=Race`);
-    if (!sessions.length) throw new Error('no sessions');
-
-    const lastSession = sessions[sessions.length - 1];
-    const pits        = await openf1Fetch(`pit?session_key=${lastSession.session_key}`);
-    if (!pits.length) throw new Error('no pit data');
-
-    const times = pits.map(p => p.pit_duration).filter(t => t && t > 0 && t < 60);
-    const avg   = times.length ? (times.reduce((s, t) => s + t, 0) / times.length).toFixed(2) : '—';
-    const min   = times.length ? Math.min(...times).toFixed(2) : '—';
-
-    const stopsByDriver = {};
-    pits.forEach(p => {
-      stopsByDriver[p.driver_number] = (stopsByDriver[p.driver_number] || 0) + 1;
-    });
-    const maxStops = Math.max(...Object.values(stopsByDriver));
-
-    el.innerHTML = `
-      <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
-      <p class="pit-source">OpenF1 · ${lastSession.circuit_short_name || ''} · last race</p>
-      ${[
-        ['Total stops',    pits.length],
-        ['Avg duration',   avg + 's'],
-        ['Fastest stop',   min + 's'],
-        ['Max per driver', maxStops],
-      ].map(([l, v]) => `
-        <div class="stat-row">
-          <span class="stat-label">${l}</span>
-          <span class="stat-val">${v}</span>
-        </div>
-      `).join('')}
-    `;
-  } catch (err) {
-    console.warn('OpenF1 pit data unavailable:', err.message);
-    el.innerHTML = `
-      <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
-      <p class="pit-source">OpenF1 · no data for ${year}</p>
-    `;
-  }
-}
-
 /* ─── Animations ─────────────────────────────────────────────────── */
 function animateCount(el, target, duration) {
   if (!target) { el.textContent = 0; return; }
@@ -1178,15 +1132,108 @@ function renderWinShare(data) {
   `;
 }
 
+/* ─── Season Records [24] ────────────────────────────────────────── */
+// All stats derived from existing season data — zero extra API calls.
+function renderSeasonRecords(data) {
+  const races = data.races;
+
+  // Most positions gained in a single race
+  let mostGained = { val: 0, driver: '—', race: '—' };
+  races.forEach(race => {
+    race.allResults.forEach(res => {
+      if (res.grid > 0 && res.pos < 19) {
+        const gained = res.grid - res.pos;
+        if (gained > mostGained.val) {
+          mostGained = {
+              val:    gained,
+              driver: res.code || res.name.split(' ').pop(),
+              race:   race.name,
+            };
+        }
+      }
+    });
+  });
+
+  // Longest win streak
+  let longestStreak = 0, currentStreak = 0, streakDriver = '—';
+  let lastWinner = null;
+  [...races].sort((a, b) => a.round - b.round).forEach(race => {
+    if (race.winner === '—') return;
+    if (race.winner === lastWinner) {
+      currentStreak++;
+    } else {
+      currentStreak = 1;
+      lastWinner    = race.winner;
+    }
+    if (currentStreak > longestStreak) {
+      longestStreak = currentStreak;
+      streakDriver  = race.allResults[0]?.code || race.winner.split(' ').pop();
+    }
+  });
+
+  // Most DNFs
+  const dnfMap = {};
+  races.forEach(race => {
+    race.allResults.forEach(res => {
+      if (res.pos >= 19) {
+        const key = res.code || res.name.split(' ').pop();
+        dnfMap[key] = (dnfMap[key] || 0) + 1;
+      }
+    });
+  });
+  const topDnf = Object.entries(dnfMap).sort((a, b) => b[1] - a[1])[0];
+
+  // Most pole positions
+  const poleMap = {};
+  races.forEach(race => {
+    race.allResults.forEach(res => {
+      if (res.grid === 1) {
+        const key = res.code || res.name.split(' ').pop();
+        poleMap[key] = (poleMap[key] || 0) + 1;
+      }
+    });
+  });
+  const topPole = Object.entries(poleMap).sort((a, b) => b[1] - a[1])[0];
+
+  // Pole to win conversion rate
+  let poleWins = 0, totalPoles = 0;
+  races.forEach(race => {
+    const winner = race.allResults.find(r => r.pos === 1);
+    const poleman = race.allResults.find(r => r.grid === 1);
+    if (poleman) {
+      totalPoles++;
+      if (winner && winner.code === poleman.code) poleWins++;
+    }
+  });
+const poleWinRate = totalPoles ? Math.round((poleWins / totalPoles) * 100) : 0;
+
+  return `
+    <hr class="right-divider">
+    <p class="eyebrow" style="margin-bottom:14px">Season Records</p>
+    ${[
+      ['Most gained',  `+${mostGained.val} · ${mostGained.driver} · ${(mostGained.race || '').replace(' GP', '')}`],
+      ['Win streak',   `${longestStreak} · ${streakDriver}`],
+      ['Most DNFs',    topDnf  ? `${topDnf[1]} · ${topDnf[0]}`  : '—'],
+      ['Most poles',   topPole ? `${topPole[1]} · ${topPole[0]}` : '—'],
+      ['Pole → win',  `${poleWinRate}% · ${poleWins}/${totalPoles}`],
+    ].map(([label, val]) => `
+      <div class="stat-row">
+        <span class="stat-label">${label}</span>
+        <span class="stat-val">${val}</span>
+      </div>
+    `).join('')}
+  `;
+}
+
 function renderSeasonStats(data) {
   return `
     <hr class="right-divider">
     <p class="eyebrow" style="margin-bottom:14px">Season Stats</p>
     ${[
-      ['Total rounds',  data.totalRaces],
-      ['Fastest laps',  data.fastestLaps],
-      ['Win rate',      Math.round((data.champWins  / data.totalRaces) * 100) + '%'],
-      ['Podium rate',   Math.round((data.podiums    / data.totalRaces) * 100) + '%'],
+      ['Total rounds', data.totalRaces],
+      ['Fastest laps', data.fastestLaps],
+      ['Win rate',     Math.round((data.champWins / data.totalRaces) * 100) + '%'],
+      ['Podium rate',  Math.round((data.podiums   / data.totalRaces) * 100) + '%'],
     ].map(([label, val]) => `
       <div class="stat-row">
         <span class="stat-label">${label}</span>
@@ -1200,18 +1247,14 @@ function renderRightColumn(data) {
   return `
     ${renderConstructorList(data)}
     ${renderWinShare(data)}
-    <hr class="right-divider">
-    <div id="pit-block">
-      <p class="eyebrow" style="margin-bottom:6px">Pit Stops</p>
-      <p class="pit-loading">Fetching OpenF1 data…</p>
-    </div>
+    ${renderSeasonRecords(data)}
     ${renderSeasonStats(data)}
   `;
 }
 
 /* ─── Grid → Finish slope chart [23] ────────────────────────────── */
 // Renders synchronously from existing race data — no API calls needed.
-// Lines and dots are coloured by team; delta text is green/red for gained/lost.
+// Lines/dots coloured by team; delta text green/red for gained/lost.
 function renderSlopeChart(race) {
   const allRes = (race.allResults || [])
     .filter(r => r.grid > 0)
@@ -1263,9 +1306,9 @@ function renderSlopeChart(race) {
     return `
       <circle cx="${LEFT_X}" cy="${yL}" r="4.5" fill="${col}"/>
       <text x="${LEFT_X - 16}" y="${yL + 5}" text-anchor="end"
-        style="font-family:var(--font-mono);font-size:14px;fill:var(--text-4)">${res.grid}</text>
-      <text x="${LEFT_X - 38}" y="${yL + 5}" text-anchor="end"
-        style="font-family:var(--font-mono);font-size:18px;font-weight:500;fill:var(--text-2)">${surname}</text>`;
+        style="font-family:var(--font-mono);font-size:18px;fill:var(--text-4)">${res.grid}</text>
+      <text x="${LEFT_X - 50}" y="${yL + 5}" text-anchor="end"
+        style="font-family:var(--font-mono);font-size:22px;font-weight:500;fill:var(--text-2)">${surname}</text>`;
   }).join('');
 
   const rightLabels = byFinish.map(res => {
@@ -1278,9 +1321,9 @@ function renderSlopeChart(race) {
     return `
       <circle cx="${RIGHT_X}" cy="${yR}" r="4.5" fill="${col}"/>
       <text x="${RIGHT_X + 16}" y="${yR + 5}" text-anchor="start"
-        style="font-family:var(--font-mono);font-size:14px;fill:var(--text-4)">${isDnf ? '--' : res.pos}</text>
+        style="font-family:var(--font-mono);font-size:18px;fill:var(--text-4)">${isDnf ? '--' : res.pos}</text>
       <text x="${RIGHT_X + 42}" y="${yR + 5}" text-anchor="start"
-        style="font-family:var(--font-mono);font-size:18px;font-weight:500;fill:${dcol}">${deltaStr}</text>`;
+        style="font-family:var(--font-mono);font-size:22px;font-weight:500;fill:${dcol}">${deltaStr}</text>`;
   }).join('');
 
   return `
@@ -1291,9 +1334,9 @@ function renderSlopeChart(race) {
         <line x1="${RIGHT_X}" y1="${Y_TOP - 16}" x2="${RIGHT_X}" y2="${totalHeight - 36}"
           stroke="var(--border)" stroke-width="0.5"/>
         <text x="${LEFT_X}"  y="${Y_TOP - 24}" text-anchor="middle"
-          style="font-family:var(--font-mono);font-size:14px;letter-spacing:2.5px;fill:var(--text-4)">GRID</text>
+          style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">GRID</text>
         <text x="${RIGHT_X}" y="${Y_TOP - 24}" text-anchor="middle"
-          style="font-family:var(--font-mono);font-size:14px;letter-spacing:2.5px;fill:var(--text-4)">FINISH</text>
+          style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">FINISH</text>
         ${svgLines}
         ${leftLabels}
         ${rightLabels}
@@ -1330,10 +1373,10 @@ function renderDrilldown(round, data) {
     </div>
   `).join('');
 
-return `
+  return `
     <div class="drilldown-inner">
       <div class="drilldown-col">
-        <p class="drilldown-col-title">Qualifying</p>
+        <p class="drilldown-col-title" style="color:var(--text-2)">Qualifying</p>
         ${qualRows}
         <div class="drilldown-track-wrap" style="flex-direction:column;align-items:flex-start;border-top:none;margin-top:12px">
           <p class="drilldown-col-title" style="margin-bottom:12px;color:var(--text-2);border:none">${race.circuit} — ${race.country}</p>
@@ -1347,10 +1390,10 @@ return `
       </div>
       <div class="drilldown-divider"></div>
       <div class="drilldown-col drilldown-col-race">
-        <p class="drilldown-col-title">Race — Top 10</p>
+        <p class="drilldown-col-title" style="color:var(--text-2)">Race — Top 10</p>
         ${raceRows}
         <div class="drilldown-lap-section">
-          <p class="drilldown-col-title" style="margin-top:24px;color:var(--text-2)"">Grid → Finish</p>
+          <p class="drilldown-col-title" style="margin-top:24px;color:var(--text-2)">Grid → Finish</p>
           ${renderSlopeChart(race)}
         </div>
       </div>
@@ -1484,7 +1527,7 @@ function renderChampVsRunnerUp(data) {
   `;
 }
 
-/* ─── Hero section ────────────────────────────────────────────────── */
+/* ─── Hero section ───────────────────────────────────────────────── */
 function renderHero(data) {
   const champColor = teamColor(data.champTeam);
   return `
@@ -1507,7 +1550,7 @@ function renderHero(data) {
   `;
 }
 
-/* ─── Metrics grid ────────────────────────────────────────────────── */
+/* ─── Metrics grid ───────────────────────────────────────────────── */
 function renderMetricsGrid(data) {
   const metrics = [
     { label: 'Race Wins', id: 'mv-wins',  val: data.champWins,   max: data.totalRaces,  delay: 0   },
@@ -1595,9 +1638,6 @@ function renderSeason(data) {
     }, 150);
   });
 
-  const pitEl = document.getElementById('pit-block');
-  if (pitEl) loadPitData(data.year, pitEl);
-
   setTimeout(() => renderCharts(data), 420);
 }
 
@@ -1646,7 +1686,6 @@ async function fetchAndRender(year) {
   const { signal } = activeFetchController;
 
   isLoading = true;
-  setApiStatus('loading');
   showLoading(
     year === THIS_YEAR ? 'FETCHING LIVE DATA' : 'LOADING SEASON DATA',
     year === THIS_YEAR ? `JOLPICA F1 — ${year}` : `SUPABASE — ${year}`
@@ -1654,7 +1693,6 @@ async function fetchAndRender(year) {
 
   try {
     const data = await loadSeason(year, signal);
-    setApiStatus('live');
     renderSeason(data);
 
     const adjacent = [year - 1, year + 1].filter(
@@ -1668,12 +1706,11 @@ async function fetchAndRender(year) {
   } catch (err) {
     if (err.name === 'AbortError') return;
     console.error(err);
-    setApiStatus('error');
     showError(isCorsError(err)
-    ? (window.location.protocol === 'file://'
-        ? 'Network error — make sure you\'re running via a local server, not file://'
-        : 'Network error — the API may be temporarily unavailable. Please try again in a moment.')
-    : err);
+      ? (window.location.protocol === 'file://'
+          ? 'Network error — make sure you\'re running via a local server, not file://'
+          : 'Network error — the API may be temporarily unavailable. Please try again in a moment.')
+      : err);
   } finally {
     isLoading = false;
     buildSeasonBar();
@@ -1696,27 +1733,9 @@ function buildSeasonBar() {
   });
 }
 
-/* ─── API status indicator ───────────────────────────────────────── */
-function setApiStatus(state) {
-  const el = document.getElementById('api-status');
-  if (!el) return;
-  const states = {
-    loading: ['○ loading', ''],
-    live:    ['● live',    'live'],
-    error:   ['● error',   'error'],
-  };
-  const [text, cls] = states[state] || states.loading;
-  el.textContent = text;
-  el.className   = `api-badge${cls ? ' ' + cls : ''}`;
-}
-
 /* ─── Theme ──────────────────────────────────────────────────────── */
 function initTheme() {
-  const saved       = localStorage.getItem('f1-theme');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  if (saved === 'dark' || (!saved && prefersDark)) {
-    document.documentElement.classList.add('dark');
-  }
+ // Theme already applied by inline script in <head> of index.html
 }
 
 function toggleTheme() {

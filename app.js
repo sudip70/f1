@@ -1327,20 +1327,22 @@ function renderSlopeChart(race) {
   }).join('');
 
   return `
-    <div style="padding:8px 8px 8px 8px">
-      <svg width="100%" viewBox="0 0 700 ${totalHeight}" style="display:block;overflow:visible">
-        <line x1="${LEFT_X}"  y1="${Y_TOP - 16}" x2="${LEFT_X}"  y2="${totalHeight - 36}"
-          stroke="var(--border)" stroke-width="0.5"/>
-        <line x1="${RIGHT_X}" y1="${Y_TOP - 16}" x2="${RIGHT_X}" y2="${totalHeight - 36}"
-          stroke="var(--border)" stroke-width="0.5"/>
-        <text x="${LEFT_X}"  y="${Y_TOP - 24}" text-anchor="middle"
-          style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">GRID</text>
-        <text x="${RIGHT_X}" y="${Y_TOP - 24}" text-anchor="middle"
-          style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">FINISH</text>
-        ${svgLines}
-        ${leftLabels}
-        ${rightLabels}
-      </svg>
+    <div style="padding:8px 8px 8px 8px;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <div style="min-width:520px">
+        <svg width="100%" viewBox="0 0 700 ${totalHeight}" style="display:block;overflow:visible">
+          <line x1="${LEFT_X}"  y1="${Y_TOP - 16}" x2="${LEFT_X}"  y2="${totalHeight - 36}"
+            stroke="var(--border)" stroke-width="0.5"/>
+          <line x1="${RIGHT_X}" y1="${Y_TOP - 16}" x2="${RIGHT_X}" y2="${totalHeight - 36}"
+            stroke="var(--border)" stroke-width="0.5"/>
+          <text x="${LEFT_X}"  y="${Y_TOP - 24}" text-anchor="middle"
+            style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">GRID</text>
+          <text x="${RIGHT_X}" y="${Y_TOP - 24}" text-anchor="middle"
+            style="font-family:var(--font-mono);font-size:18px;letter-spacing:2.5px;fill:var(--text-4)">FINISH</text>
+          ${svgLines}
+          ${leftLabels}
+          ${rightLabels}
+        </svg>
+      </div>
     </div>`;
 }
 

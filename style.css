@@ -755,10 +755,10 @@ html.dark .theme-icon-dark  { display: flex; }
 /* ─── Race drill-down panel ──────────────────────────────────────── */
 @keyframes drilldownOpen {
   from { opacity: 0; max-height: 0; }
-  to   { opacity: 1; max-height: 3000px; }
+  to   { opacity: 1; max-height: 1200px; }
 }
 @keyframes drilldownClose {
-  from { opacity: 1; max-height: 3000px; }
+  from { opacity: 1; max-height: 1200px; }
   to   { opacity: 0; max-height: 0; }
 }
 
@@ -772,7 +772,6 @@ html.dark .theme-icon-dark  { display: flex; }
 }
 .race-drilldown.drilldown-open {
   animation: drilldownOpen 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  max-height: 3000px;
 }
 .race-drilldown.drilldown-closing {
   animation: drilldownClose 0.2s ease forwards;
@@ -780,7 +779,7 @@ html.dark .theme-icon-dark  { display: flex; }
 
 @media (prefers-reduced-motion: reduce) {
   .race-drilldown,
-  .race-drilldown.drilldown-open { animation: none; max-height: 3000px; opacity: 1; }
+  .race-drilldown.drilldown-open { animation: none; max-height: 1200px; opacity: 1; }
   .race-drilldown.drilldown-closing { display: none; }
 }
 

@@ -1735,7 +1735,7 @@ function buildSeasonBar() {
 
 /* ─── Theme ──────────────────────────────────────────────────────── */
 function initTheme() {
- // Theme already applied by inline script in <head> of index.html
+
 }
 
 function toggleTheme() {

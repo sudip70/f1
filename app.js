@@ -1008,8 +1008,8 @@ function renderRacesTab(data) {
     </div>
     ${data.races.map((race, i) => `
       <div class="race-row${expandedRound === race.round ? ' expanded' : ''}"
-           data-round="${race.round}"
-           style="animation-delay:${i * 25}ms"
+           data-round="${race.round}" 
+           style="animation-delay:${i * 25}ms; --team-color:${teamColor(race.team)}""
            role="button" tabindex="0"
            aria-expanded="${expandedRound === race.round}">
         <span class="race-num">${String(race.round).padStart(2, '0')}</span>
@@ -1625,6 +1625,7 @@ function renderSeason(data) {
             <button class="tab-btn${currentTab === 'races'      ? ' active' : ''}" data-tab="races">Races</button>
             <button class="tab-btn${currentTab === 'qualifying' ? ' active' : ''}" data-tab="qualifying">Qualifying</button>
             <button class="tab-btn${currentTab === 'drivers'    ? ' active' : ''}" data-tab="drivers">Drivers</button>
+            <div class="tab-indicator"></div>
           </div>
           <div id="tab-content">${getTabContent(data)}</div>
         </div>
@@ -1672,6 +1673,15 @@ function renderSeason(data) {
 
   setTimeout(() => renderCharts(data), 420);
 }
+/* ── CHANGE C: Add this new function (before switchTab) ──────────── */
+function moveTabIndicator() {
+  const activeBtn = document.querySelector('.tab-btn.active');
+  const indicator = document.querySelector('.tab-indicator');
+  if (!activeBtn || !indicator) return;
+ 
+  indicator.style.width = `${activeBtn.offsetWidth}px`;
+  indicator.style.left  = `${activeBtn.offsetLeft}px`;
+}
 
 /* ─── Tab switching ──────────────────────────────────────────────── */
 function switchTab(tab) {
@@ -1679,11 +1689,13 @@ function switchTab(tab) {
   expandedRound = null;
   const data = seasonCache[currentSeason];
   if (!data) return;
-
+ 
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-
+ 
+  moveTabIndicator(); // ← slides the indicator
+ 
   const tabEl = document.getElementById('tab-content');
   if (tabEl) {
     tabEl.style.cssText = 'opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s';
@@ -1750,19 +1762,35 @@ async function fetchAndRender(year) {
 }
 
 /* ─── Season bar ─────────────────────────────────────────────────── */
+/* ── CHANGE A: Replace buildSeasonBar() ─────────────────────────── */
 function buildSeasonBar() {
-  document.getElementById('season-bar').innerHTML = SEASONS.map(yr => `
-    <button
-      class="season-btn${yr === currentSeason ? ' active' : ''}"
-      data-year="${yr}"
-      aria-pressed="${yr === currentSeason}"
-      ${isLoading ? 'disabled' : ''}
-    >${yr}</button>
-  `).join('');
-
-  document.querySelectorAll('.season-btn').forEach(btn => {
-    btn.addEventListener('click', () => selectSeason(parseInt(btn.dataset.year)));
-  });
+  const bar      = document.getElementById('season-bar');
+  const existing = bar.querySelectorAll('.season-btn');
+ 
+  if (existing.length === SEASONS.length) {
+    // Buttons already exist — just update active/disabled state
+    // This lets CSS transitions animate the change instead of a hard rebuild
+    existing.forEach(btn => {
+      const yr = parseInt(btn.dataset.year);
+      btn.classList.toggle('active', yr === currentSeason);
+      btn.setAttribute('aria-pressed', yr === currentSeason);
+      btn.disabled = isLoading;
+    });
+  } else {
+    // First load — build from scratch
+    bar.innerHTML = SEASONS.map(yr => `
+      <button
+        class="season-btn${yr === currentSeason ? ' active' : ''}"
+        data-year="${yr}"
+        aria-pressed="${yr === currentSeason}"
+        ${isLoading ? 'disabled' : ''}
+      >${yr}</button>
+    `).join('');
+ 
+    bar.querySelectorAll('.season-btn').forEach(btn => {
+      btn.addEventListener('click', () => selectSeason(parseInt(btn.dataset.year)));
+    });
+  }
 }
 
 /* ─── Theme ──────────────────────────────────────────────────────── */

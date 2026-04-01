@@ -4,7 +4,7 @@
 /* ─── Tokens — Light ─────────────────────────────────────────────── */
 :root {
   --bg:              #f8f7f4;
-  --bg-card:         #ffffff;
+  --bg-card:         #faf9f6;  /* [fix] warmer white, less glaring than #fff */
   --bg-subtle:       #f2f1ed;
   --text:            #111111;
   --text-2:          #555555;
@@ -14,7 +14,7 @@
   --border-2:        rgba(0, 0, 0, 0.14);
   --red:             #c9211e;
   --red-soft:        rgba(201, 33, 30, 0.08);
-  --ghost-year:      rgba(0, 0, 0, 0.03);
+  --ghost-year:      rgba(0, 0, 0, 0.07); /* [fix 8] more visible in light mode */
   --chart-grid:      rgba(0, 0, 0, 0.05);
   --chart-tick:      #cccccc;
   --font-serif:      'Lora', Georgia, serif;
@@ -120,7 +120,6 @@ body {
   .bar-anim,
   .cursor-blink,
   .loading-spinner,
-  .api-badge,
   .pit-loading {
     animation: none;
     opacity: 1;
@@ -184,15 +183,7 @@ html.dark .nav {
 .nav-page-link:hover  { color: var(--text-2); background: var(--bg-subtle); }
 .nav-page-link.active { color: var(--text);   font-weight: 500; }
 
-.nav-page-link--portfolio {
-  border: 1px solid rgba(201, 33, 30, 0.45);
-  padding: 4px 12px;
-  border-radius: var(--radius-sm);
-}
-.nav-page-link--portfolio:hover {
-  background: var(--red-soft);
-  border-color: var(--red);
-}
+/* [fix 8] Removed dead .nav-page-link--portfolio rule */
 
 .nav-controls {
   display: flex;
@@ -238,18 +229,7 @@ html.dark .nav {
 .season-btn.active   { background: var(--red-soft); border-color: rgba(201,33,30,0.25); color: var(--red); font-weight: 500; }
 .season-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-/* ─── API status badge ───────────────────────────────────────────── */
-.api-badge {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-4);
-  letter-spacing: 0.5px;
-  flex-shrink: 0;
-  transition: color 0.3s;
-  animation: pulse 2.5s ease infinite;
-}
-.api-badge.live  { color: #2d7a3e; animation: none; }
-.api-badge.error { color: var(--red); animation: none; }
+/* [fix 3] Removed dead .api-badge rule — element is never rendered */
 
 /* ─── Theme toggle ───────────────────────────────────────────────── */
 .theme-toggle {
@@ -445,7 +425,7 @@ html.dark .theme-icon-dark  { display: flex; }
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 56px;
+  margin-bottom: 36px; /* [fix spacing] reduced from 56px */
 }
 
 @media (max-width: 640px) {
@@ -479,7 +459,7 @@ html.dark .theme-icon-dark  { display: flex; }
   color: var(--text);
 }
 .metric-track {
-  height: 1.5px;
+  height: 2px; /* [fix] thicker — more visible in light mode */
   background: var(--border);
   margin-top: 16px;
   border-radius: 1px;
@@ -511,11 +491,14 @@ html.dark .theme-icon-dark  { display: flex; }
 }
 
 @media (max-width: 960px) {
+  /* [fix 5] fade gradient at bottom so clipped content is signalled */
   #tab-content {
     max-height: clamp(400px, 60dvh, 680px);
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-2) transparent;
+    -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+    mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
   }
   #tab-content::-webkit-scrollbar       { width: 3px; }
   #tab-content::-webkit-scrollbar-track { background: transparent; }
@@ -560,25 +543,23 @@ html.dark .theme-icon-dark  { display: flex; }
 }
 
 /* ─── Race rows ──────────────────────────────────────────────────── */
+/* [fix 4] Use consistent padding to prevent layout shift on hover */
 .race-row {
   display: grid;
-  grid-template-columns: 28px 1fr 80px auto 18px;
+  grid-template-columns: 28px 1fr 80px auto 32px;
   align-items: center;
   gap: 16px;
-  padding: 13px 0;
+  padding: 14px 12px;
   border-bottom: 1px solid var(--border);
   opacity: 0;
   animation: slideInL 0.42s ease forwards;
   cursor: pointer;
   border-radius: var(--radius);
+  transition: background 0.15s;
 }
 
-.race-row.expanded {
-  padding: 16px 12px;
-  margin-bottom: 0;
-}
-.race-row:hover    { background: var(--bg-subtle); padding: 16px 12px; }
-.race-row.expanded { background: var(--bg-subtle); padding: 16px 12px; }
+.race-row:hover    { background: var(--bg-subtle); }
+.race-row.expanded { background: var(--bg-subtle); }
 
 .race-num {
   font-family: var(--font-mono);
@@ -620,14 +601,29 @@ html.dark .theme-icon-dark  { display: flex; }
   text-align: right;
   white-space: nowrap;
 }
+
+/* [fix 4] Expand icon — intentional circular button, no layout shift */
 .race-expand-icon {
-  font-size: 8px;
-  color: var(--text-4);
-  text-align: right;
-  transition: color 0.15s;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-3);
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  justify-self: end;
+  flex-shrink: 0;
 }
 .race-row:hover    .race-expand-icon,
-.race-row.expanded .race-expand-icon { color: var(--text-3); }
+.race-row.expanded .race-expand-icon {
+  color: var(--text);
+  background: var(--bg-card);
+  border-color: var(--border-2);
+}
 
 /* ─── Qualifying rows ────────────────────────────────────────────── */
 .qual-row {
@@ -690,13 +686,12 @@ html.dark .theme-icon-dark  { display: flex; }
 .stat-row   { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .stat-label { font-size: 13px; color: var(--text-3); }
 .stat-val   { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
-.pit-loading { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); padding: 10px 0; animation: pulse 1.8s ease infinite; }
 .pit-source  { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px; color: var(--text-4); text-transform: uppercase; margin-bottom: 14px; }
 
 /* ─── Charts section ─────────────────────────────────────────────── */
 .charts-section {
-  padding: 56px 0 80px;
-  border-top: 1px solid var(--border);
+  padding: 40px 0 56px; /* [fix spacing] reduced from 56px/80px */
+  /* [fix] border-top removed — single divider now comes from cvs-section border-bottom */
 }
 .charts-heading {
   font-family: var(--font-serif);
@@ -711,7 +706,7 @@ html.dark .theme-icon-dark  { display: flex; }
   font-size: 11px;
   color: var(--text-4);
   letter-spacing: 1px;
-  margin-bottom: 40px;
+  margin-bottom: 28px; /* [fix spacing] reduced from 40px */
 }
 .charts-grid {
   display: grid;
@@ -861,9 +856,9 @@ html:not(.dark) .drilldown-track-img {
 
 /* ─── Champion vs Runner-up strip ────────────────────────────────── */
 .cvs-section {
-  padding: 44px 0 48px;
+  padding: 36px 0 36px; /* [fix spacing] reduced from 44px/48px */
   border-bottom: 1px solid var(--border);
-  margin-bottom: 56px;
+  margin-bottom: 0; /* charts-section provides its own top padding */
 }
 .cvs-header {
   display: flex;

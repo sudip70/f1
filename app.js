@@ -43,6 +43,12 @@
         — derived entirely from existing season data, no API calls
         — most positions gained, win streak, most DNFs, most poles, 1-2 finish
         — removed openf1Fetch and loadPitData (dead code)
+
+   BUG FIXES (v8):
+   [25] Removed empty initTheme() function — theme init handled by inline script in HTML
+   [26] Added onerror handler to hero-car img to suppress broken image icon
+   [27] Default season changed to THIS_YEAR (live season) instead of THIS_YEAR - 1
+   [28] Typewriter guard — handles champion names with no space gracefully
 ═══════════════════════════════════════════════════════════════════ */
 'use strict';
 
@@ -119,7 +125,7 @@ function getPoints(position, year) {
 }
 
 /* ─── State ──────────────────────────────────────────────────────── */
-let currentSeason         = THIS_YEAR - 1;
+let currentSeason         = THIS_YEAR; // [27] Default to live season
 let currentTab            = 'races';
 let seasonCache           = {};
 let seasonCacheTime       = {};
@@ -940,23 +946,29 @@ function animateCount(el, target, duration) {
   requestAnimationFrame(run);
 }
 
+// [28] Guard: handle names with no space (single-word names)
 function typewriteChampion(nameEl, cursorEl, fullName, speed = 42) {
   if (typewriterTimer) clearInterval(typewriterTimer);
   nameEl.innerHTML       = '';
   cursorEl.style.opacity = '1';
 
-  const spaceIdx  = fullName.lastIndexOf(' ');
-  const firstName = fullName.slice(0, spaceIdx);
-  const surname   = fullName.slice(spaceIdx + 1);
+  const spaceIdx = fullName.lastIndexOf(' ');
+
+  // If no space found, treat the whole name as surname (italic)
+  const firstName = spaceIdx > -1 ? fullName.slice(0, spaceIdx) : '';
+  const surname   = spaceIdx > -1 ? fullName.slice(spaceIdx + 1) : fullName;
   let i = 0;
 
   setTimeout(() => {
     typewriterTimer = setInterval(() => {
       i++;
-      if (i <= spaceIdx) {
+      if (spaceIdx > -1 && i <= spaceIdx) {
         nameEl.innerHTML = fullName.slice(0, i);
       } else {
-        nameEl.innerHTML = `${firstName} <em>${surname.slice(0, i - spaceIdx - 1)}</em>`;
+        const surnameProgress = i - (spaceIdx > -1 ? spaceIdx + 1 : 0);
+        nameEl.innerHTML = firstName
+          ? `${firstName} <em>${surname.slice(0, surnameProgress)}</em>`
+          : `<em>${surname.slice(0, surnameProgress)}</em>`;
       }
       if (i >= fullName.length) {
         clearInterval(typewriterTimer);
@@ -1133,11 +1145,9 @@ function renderWinShare(data) {
 }
 
 /* ─── Season Records [24] ────────────────────────────────────────── */
-// All stats derived from existing season data — zero extra API calls.
 function renderSeasonRecords(data) {
   const races = data.races;
 
-  // Most positions gained in a single race
   let mostGained = { val: 0, driver: '—', race: '—' };
   races.forEach(race => {
     race.allResults.forEach(res => {
@@ -1145,16 +1155,15 @@ function renderSeasonRecords(data) {
         const gained = res.grid - res.pos;
         if (gained > mostGained.val) {
           mostGained = {
-              val:    gained,
-              driver: res.code || res.name.split(' ').pop(),
-              race:   race.name,
-            };
+            val:    gained,
+            driver: res.code || res.name.split(' ').pop(),
+            race:   race.name,
+          };
         }
       }
     });
   });
 
-  // Longest win streak
   let longestStreak = 0, currentStreak = 0, streakDriver = '—';
   let lastWinner = null;
   [...races].sort((a, b) => a.round - b.round).forEach(race => {
@@ -1171,7 +1180,6 @@ function renderSeasonRecords(data) {
     }
   });
 
-  // Most DNFs
   const dnfMap = {};
   races.forEach(race => {
     race.allResults.forEach(res => {
@@ -1183,7 +1191,6 @@ function renderSeasonRecords(data) {
   });
   const topDnf = Object.entries(dnfMap).sort((a, b) => b[1] - a[1])[0];
 
-  // Most pole positions
   const poleMap = {};
   races.forEach(race => {
     race.allResults.forEach(res => {
@@ -1195,17 +1202,16 @@ function renderSeasonRecords(data) {
   });
   const topPole = Object.entries(poleMap).sort((a, b) => b[1] - a[1])[0];
 
-  // Pole to win conversion rate
   let poleWins = 0, totalPoles = 0;
   races.forEach(race => {
-    const winner = race.allResults.find(r => r.pos === 1);
+    const winner  = race.allResults.find(r => r.pos === 1);
     const poleman = race.allResults.find(r => r.grid === 1);
     if (poleman) {
       totalPoles++;
       if (winner && winner.code === poleman.code) poleWins++;
     }
   });
-const poleWinRate = totalPoles ? Math.round((poleWins / totalPoles) * 100) : 0;
+  const poleWinRate = totalPoles ? Math.round((poleWins / totalPoles) * 100) : 0;
 
   return `
     <hr class="right-divider">
@@ -1215,7 +1221,7 @@ const poleWinRate = totalPoles ? Math.round((poleWins / totalPoles) * 100) : 0;
       ['Win streak',   `${longestStreak} · ${streakDriver}`],
       ['Most DNFs',    topDnf  ? `${topDnf[1]} · ${topDnf[0]}`  : '—'],
       ['Most poles',   topPole ? `${topPole[1]} · ${topPole[0]}` : '—'],
-      ['Pole → win',  `${poleWinRate}% · ${poleWins}/${totalPoles}`],
+      ['Pole → win',   `${poleWinRate}% · ${poleWins}/${totalPoles}`],
     ].map(([label, val]) => `
       <div class="stat-row">
         <span class="stat-label">${label}</span>
@@ -1253,8 +1259,6 @@ function renderRightColumn(data) {
 }
 
 /* ─── Grid → Finish slope chart [23] ────────────────────────────── */
-// Renders synchronously from existing race data — no API calls needed.
-// Lines/dots coloured by team; delta text green/red for gained/lost.
 function renderSlopeChart(race) {
   const allRes = (race.allResults || [])
     .filter(r => r.grid > 0)
@@ -1533,7 +1537,12 @@ function renderHero(data) {
   return `
     <div class="hero">
       <div class="hero-year-ghost">${data.year}</div>
-      <img src="image/${data.year}.svg" class="hero-car" alt="${data.year} F1 Car" />
+      <img
+        src="image/${data.year}.svg"
+        class="hero-car"
+        alt="${data.year} F1 Car"
+        onerror="this.style.display='none'"
+      />
       <p class="eyebrow">${data.year === THIS_YEAR ? 'Championship Leader' : 'World Champion'} — ${data.year}</p>
       <div class="hero-name-row">
         <span id="hero-name" class="hero-name"></span>
@@ -1545,6 +1554,28 @@ function renderHero(data) {
           ${data.champTeam}
         </span>
         <span class="hero-nat">${data.champNat}</span>
+        <button
+          onclick="
+            const el = document.getElementById('race-data');
+            const y = el.getBoundingClientRect().top + window.scrollY - 104;
+            window.scrollTo({ top: y, behavior: 'smooth' });
+          "
+          style="
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: ${champColor};
+            background: ${champColor}18;
+            border: 1px solid ${champColor}55;
+            border-radius: var(--radius-sm);
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+          "
+          onmouseover="this.style.background='${champColor}30';this.style.borderColor='${champColor}'"
+          onmouseout="this.style.background='${champColor}18';this.style.borderColor='${champColor}55'"
+        >↓ View Race Results</button>
       </div>
     </div>
   `;
@@ -1586,9 +1617,10 @@ function renderSeason(data) {
       ${renderHero(data)}
       ${metricsHtml}
       ${renderChampVsRunnerUp(data)}
+      <div class="charts-section fade-up" id="charts-section" style="animation-delay:280ms"></div>
       <div class="main-grid">
         <div>
-          <div class="tabs">
+          <div class="tabs" id="race-data">
             <button class="tab-btn${currentTab === 'races'      ? ' active' : ''}" data-tab="races">Races</button>
             <button class="tab-btn${currentTab === 'qualifying' ? ' active' : ''}" data-tab="qualifying">Qualifying</button>
             <button class="tab-btn${currentTab === 'drivers'    ? ' active' : ''}" data-tab="drivers">Drivers</button>
@@ -1597,7 +1629,6 @@ function renderSeason(data) {
         </div>
         <div>${renderRightColumn(data)}</div>
       </div>
-      <div class="charts-section fade-up" id="charts-section" style="animation-delay:280ms"></div>
     </div>
   `;
 
@@ -1734,9 +1765,8 @@ function buildSeasonBar() {
 }
 
 /* ─── Theme ──────────────────────────────────────────────────────── */
-function initTheme() {
-
-}
+// [25] initTheme() removed — theme is initialised by the inline script in index.html
+//      which runs before body render to prevent flash. No need for a JS function here.
 
 function toggleTheme() {
   const dark = document.documentElement.classList.toggle('dark');
@@ -1747,7 +1777,6 @@ function toggleTheme() {
 }
 
 /* ─── Init ───────────────────────────────────────────────────────── */
-initTheme();
 setChartDefaults();
 
 const _footerYear = document.getElementById('footer-year');

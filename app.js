@@ -1554,6 +1554,8 @@ function renderHero(data) {
           ${data.champTeam}
         </span>
         <span class="hero-nat">${data.champNat}</span>
+      </div>
+      <div style="margin-top:16px">
         <button
           onclick="
             const el = document.getElementById('race-data');
@@ -1580,7 +1582,6 @@ function renderHero(data) {
     </div>
   `;
 }
-
 /* ─── Metrics grid ───────────────────────────────────────────────── */
 function renderMetricsGrid(data) {
   const metrics = [

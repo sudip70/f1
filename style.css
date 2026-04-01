@@ -425,7 +425,6 @@ html.dark .theme-icon-dark  { display: flex; }
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 36px; /* [fix spacing] reduced from 56px */
 }
 
 @media (max-width: 640px) {

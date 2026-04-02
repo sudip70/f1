@@ -1009,7 +1009,7 @@ function renderRacesTab(data) {
     ${data.races.map((race, i) => `
       <div class="race-row${expandedRound === race.round ? ' expanded' : ''}"
            data-round="${race.round}" 
-           style="animation-delay:${i * 25}ms; --team-color:${teamColor(race.team)}""
+           style="animation-delay:${i * 25}ms; --team-color:${teamColor(race.team)}"
            role="button" tabindex="0"
            aria-expanded="${expandedRound === race.round}">
         <span class="race-num">${String(race.round).padStart(2, '0')}</span>
@@ -1669,6 +1669,7 @@ function renderSeason(data) {
         if (el) animateCount(el, m.val, 900 + m.delay);
       });
     }, 150);
+    setTimeout(() => moveTabIndicator(), 50);
   });
 
   setTimeout(() => renderCharts(data), 420);

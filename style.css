@@ -225,15 +225,14 @@ html.dark .nav {
   cursor: pointer;
   letter-spacing: 0.5px;
   white-space: nowrap;
-  transition: color 0.2s, background 0.25s, border-color 0.25s, transform 0.15s;
+  transition: color 0.2s, background 0.25s, border-color 0.25s;
 }
 .season-btn:hover    { color: var(--text-2); background: var(--bg-subtle); }
-.season-btn.active   {
+.season-btn.active {
   background: var(--red-soft);
   border-color: rgba(201,33,30,0.25);
   color: var(--red);
   font-weight: 500;
-  transform: scale(1.05);
 }
 .season-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 /* [fix 3] Removed dead .api-badge rule — element is never rendered */
@@ -1278,14 +1277,6 @@ html:not(.dark) .drilldown-track-img {
   }
 }
 
-@media (max-width: 600px) {
-  .hero-race-btn {
-    order: 3;
-    flex-basis: 100%;
-    width: fit-content;
-    margin-top: 4px;
-  }
-}
 
 @keyframes funkoFloat {
   0%   { transform: translateY(0px); }

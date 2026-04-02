@@ -42,13 +42,13 @@ Browsers block `fetch()` and ES modules when opening files via `file://`. You ne
 **Option 1 - Python (no install needed):**
 ```bash
 python3 -m http.server 8000
-# then open http://localhost:8000
+#then open http://localhost:8000
 ```
 
 **Option 2 - Node.js:**
 ```bash
 npx serve .
-# then open the URL it prints
+#then open the URL it prints
 ```
 
 **Option 3 - VS Code:**
@@ -60,16 +60,16 @@ Install the **Live Server** extension → right-click `index.html` → Open with
 
 ```
 f1/
-├── index.html          # Main analytics page
-├── about.html          # About the project & author
-├── about-api.html      # Data sources & architecture docs
-├── app.js              # All JS - data fetching, rendering, charts
-├── style.css           # All styles - tokens, components, animations
-├── package.json        # Module type declaration + supabase dep
+├── index.html          #Main analytics page
+├── about.html          #About the project & author
+├── about-api.html      #Data sources & architecture docs
+├── app.js              #All JS - data fetching, rendering, charts
+├── style.css           #All styles - tokens, components, animations
+├── package.json        #Module type declaration + supabase dep
 └── image/
-    ├── YYYY.svg        # Hero car SVG per season year
+    ├── YYYY.svg        #Hero car SVG per season year
     └── tracks/
-        └── *.svg       # Circuit layout SVGs (named by circuit slug)
+        └── *.svg       #Circuit layout SVGs (named by circuit slug)
 ```
 
 ---

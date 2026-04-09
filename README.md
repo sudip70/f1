@@ -4,7 +4,10 @@ A browser-based Formula 1 analytics dashboard covering every season from 2000 to
 
 **Live:** [sudip70.github.io/f1](https://sudip70.github.io/f1)
 
-**Demo:** ![Demo GIF](f1_demo.gif)
+**Demo:** 
+<p align="center">
+  <img src="f1_demo.gif" width="600"/>
+</p>
 ---
 
 ## Features

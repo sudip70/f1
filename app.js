@@ -1801,13 +1801,22 @@ function buildSeasonBar() {
 function toggleTheme() {
   const dark = document.documentElement.classList.toggle('dark');
   localStorage.setItem('f1-theme', dark ? 'dark' : 'light');
+  updateThemeToggleLabel();
   setChartDefaults();
   const data = seasonCache[currentSeason];
   if (data) setTimeout(() => renderCharts(data), 50);
 }
 
+function updateThemeToggleLabel() {
+  const button = document.getElementById('theme-toggle');
+  if (!button) return;
+  const dark = document.documentElement.classList.contains('dark');
+  button.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+}
+
 /* ─── Init ───────────────────────────────────────────────────────── */
 setChartDefaults();
+updateThemeToggleLabel();
 
 const _footerYear = document.getElementById('footer-year');
 if (_footerYear) _footerYear.textContent = `© ${new Date().getFullYear()} Sudip Shrestha`;

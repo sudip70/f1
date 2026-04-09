@@ -255,10 +255,10 @@ html.dark .nav {
 .theme-toggle:hover  { background: var(--toggle-hover-bg); color: var(--text-2); }
 .theme-toggle:active { transform: scale(0.94); }
 
-.theme-icon-light { display: flex; }
-.theme-icon-dark  { display: none; }
-html.dark .theme-icon-light { display: none; }
-html.dark .theme-icon-dark  { display: flex; }
+.theme-icon-light { display: none; }
+.theme-icon-dark  { display: flex; }
+html.dark .theme-icon-light { display: flex; }
+html.dark .theme-icon-dark  { display: none; }
 
 /* ─── Layout ─────────────────────────────────────────────────────── */
 .container { max-width: 1160px; margin: 0 auto; padding: 0 32px; }

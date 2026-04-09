@@ -124,6 +124,94 @@ function getPoints(position, year) {
   return sys[position - 1] || 0;
 }
 
+function toInt(value, fallback = 0) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toFloat(value, fallback = 0) {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toOptionalFloat(value) {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function percentOf(value, total) {
+  if (!total || total <= 0) return 0;
+  return Math.round((value / total) * 100);
+}
+
+function formatRate(value, total) {
+  return `${percentOf(value, total)}%`;
+}
+
+function hasRenderableSeasonData(data) {
+  if (!data || !Array.isArray(data.races) || data.races.length === 0) return false;
+  if (!Array.isArray(data.drivers) || data.drivers.length === 0) return false;
+  if (!Array.isArray(data.constructors) || data.constructors.length === 0) return false;
+  if (!Array.isArray(data.qualifying) || data.qualifying.length !== data.races.length) return false;
+  return true;
+}
+
+function buildPoleSummary(data) {
+  const poleMap = {};
+  let totalPoles = 0;
+  let poleWins = 0;
+
+  (data.qualifying || []).forEach(session => {
+    const pole = session.results?.[0];
+    if (!pole) return;
+
+    const key = pole.code || pole.name.split(' ').pop() || pole.name || '—';
+    poleMap[key] = (poleMap[key] || 0) + 1;
+    totalPoles++;
+
+    const race = (data.races || []).find(r => r.round === session.round);
+    const winner = race?.allResults?.find(res => res.pos === 1);
+    if (!winner) return;
+
+    const sameDriver = pole.code
+      ? winner.code === pole.code
+      : winner.name === pole.name;
+
+    if (sameDriver) poleWins++;
+  });
+
+  return {
+    topPole: Object.entries(poleMap).sort((a, b) => b[1] - a[1])[0],
+    poleWins,
+    totalPoles,
+  };
+}
+
+async function fetchDriverStandingsByRound(year, rounds, signal) {
+  if (!rounds.length) return [];
+
+  const pages = await jolpicaFetchBatched(
+    rounds.map(round => `${year}/${round}/driverstandings/`),
+    signal,
+    (done, total) => {
+      const sub = document.querySelector('.loading-sub');
+      if (sub) sub.textContent = `JOLPICA F1 — ${year} · standings ${done} / ${total} rounds`;
+    }
+  );
+
+  return pages.map(page => {
+    const list = page.MRData.StandingsTable.StandingsLists?.[0];
+    return {
+      round: toInt(list?.round),
+      results: (list?.DriverStandings || []).map(driver => ({
+        code: driver.Driver.code,
+        name: `${driver.Driver.givenName} ${driver.Driver.familyName}`,
+        points: toFloat(driver.points),
+      })),
+    };
+  }).sort((a, b) => a.round - b.round);
+}
+
 /* ─── State ──────────────────────────────────────────────────────── */
 let currentSeason         = THIS_YEAR; // [27] Default to live season
 let currentTab            = 'races';
@@ -135,6 +223,7 @@ let typewriterTimer       = null;
 let renderGeneration      = 0;
 let activeFetchController = null;
 let expandedRound         = null;
+let seasonBarScrollFrame  = null;
 
 /* ─── Fetch helpers ──────────────────────────────────────────────── */
 function isCorsError(err) {
@@ -235,11 +324,11 @@ async function fetchQualifying(year, signal) {
 /* ─── Supabase season loader ─────────────────────────────────────── */
 async function loadSeasonFromDB(year) {
   const [
-    { data: racesData },
-    { data: resultsData },
-    { data: qualData },
-    { data: driversData },
-    { data: constructorsData },
+    racesRes,
+    resultsRes,
+    qualRes,
+    driversRes,
+    constructorsRes,
   ] = await Promise.all([
     supabase.from('races').select('*').eq('year', year).order('round'),
     supabase.from('race_results').select('*').eq('year', year).order('round').order('pos'),
@@ -247,6 +336,26 @@ async function loadSeasonFromDB(year) {
     supabase.from('driver_standings').select('*').eq('year', year).order('pos'),
     supabase.from('constructor_standings').select('*').eq('year', year).order('pos'),
   ]);
+
+  const queryFailures = [
+    ['races', racesRes.error],
+    ['race_results', resultsRes.error],
+    ['qualifying_results', qualRes.error],
+    ['driver_standings', driversRes.error],
+    ['constructor_standings', constructorsRes.error],
+  ].filter(([, error]) => error);
+
+  if (queryFailures.length) {
+    throw new Error(
+      `Supabase query failed for ${year} (${queryFailures.map(([name]) => name).join(', ')})`
+    );
+  }
+
+  const racesData = racesRes.data || [];
+  const resultsData = resultsRes.data || [];
+  const qualData = qualRes.data || [];
+  const driversData = driversRes.data || [];
+  const constructorsData = constructorsRes.data || [];
 
   const resultsByRound = {};
   (resultsData || []).forEach(r => {
@@ -261,32 +370,33 @@ async function loadSeasonFromDB(year) {
   });
 
   const races = (racesData || []).map(race => ({
-    round:   race.round,
+    round:   toInt(race.round),
     name:    race.name,
     circuit: race.circuit,
     country: race.country,
     date:    race.date,
     winner:  race.winner,
     team:    race.team,
-    grid:    race.grid,
-    laps:    race.laps,
+    grid:    toInt(race.grid),
+    laps:    toInt(race.laps),
     time:    race.time,
     allResults: (resultsByRound[race.round] || []).map(res => ({
-      pos:        res.pos,
+      pos:        toInt(res.pos, 99),
       name:       res.name,
       code:       res.code,
       team:       res.team,
-      grid:       res.grid,
+      grid:       toInt(res.grid),
+      points:     toOptionalFloat(res.points),
       fastestLap: res.fastest_lap,
     })),
   }));
 
   const qualifying = (racesData || []).map(race => ({
-    round:   race.round,
+    round:   toInt(race.round),
     name:    race.name,
     date:    race.date,
     results: (qualByRound[race.round] || []).map(q => ({
-      pos:  q.pos,
+      pos:  toInt(q.pos),
       name: q.name,
       code: q.code,
       team: q.team,
@@ -297,20 +407,20 @@ async function loadSeasonFromDB(year) {
   }));
 
   const drivers = (driversData || []).map(d => ({
-    pos:    d.pos,
+    pos:    toInt(d.pos),
     name:   d.name,
     code:   d.code,
     nat:    d.nat,
     team:   d.team,
-    points: d.points,
-    wins:   d.wins,
+    points: toFloat(d.points),
+    wins:   toInt(d.wins),
   }));
 
   const constructors = (constructorsData || []).map(c => ({
-    pos:    c.pos,
+    pos:    toInt(c.pos),
     team:   c.team,
-    points: c.points,
-    wins:   c.wins,
+    points: toFloat(c.points),
+    wins:   toInt(c.wins),
   }));
 
   const champDriver = drivers[0];
@@ -337,6 +447,8 @@ async function loadSeasonFromDB(year) {
     constructors,
     drivers,
     qualifying,
+    roundStandings: [],
+    source: 'supabase',
   };
 }
 
@@ -349,25 +461,37 @@ async function loadSeasonFromAPI(year, signal) {
     fetchQualifying(year, signal),
   ]);
 
+  let roundStandings = [];
+  try {
+    roundStandings = await fetchDriverStandingsByRound(
+      year,
+      rawRaces.map(race => toInt(race.round)).filter(Boolean),
+      signal
+    );
+  } catch (err) {
+    console.warn(`Unable to load per-round standings for ${year}; progression will use a fallback mode.`, err);
+  }
+
   const races = rawRaces.map(r => {
     const top = r.Results?.[0] || {};
     return {
-      round:   parseInt(r.round),
+      round:   toInt(r.round),
       name:    r.raceName.replace(' Grand Prix', ' GP'),
       circuit: r.Circuit?.circuitName || '',
       country: r.Circuit?.Location?.country || '',
       date:    r.date,
       winner:  top.Driver ? `${top.Driver.givenName} ${top.Driver.familyName}` : '—',
       team:    top.Constructor?.name || '—',
-      grid:    parseInt(top.grid) || 0,
-      laps:    parseInt(top.laps) || 0,
+      grid:    toInt(top.grid),
+      laps:    toInt(top.laps),
       time:    top.Time?.time || top.status || '—',
       allResults: (r.Results || []).map(res => ({
-        pos:        parseInt(res.position) || 99,
+        pos:        toInt(res.position, 99),
         name:       `${res.Driver.givenName} ${res.Driver.familyName}`,
         code:       res.Driver.code,
         team:       res.Constructor?.name || '—',
-        grid:       parseInt(res.grid) || 0,
+        grid:       toInt(res.grid),
+        points:     toOptionalFloat(res.points),
         fastestLap: res.FastestLap?.rank === '1',
       })),
     };
@@ -375,32 +499,32 @@ async function loadSeasonFromAPI(year, signal) {
 
   const cStandings   = constructorRes.MRData.StandingsTable.StandingsLists?.[0];
   const constructors = (cStandings?.ConstructorStandings || []).map(c => ({
-    pos:    parseInt(c.position),
+    pos:    toInt(c.position),
     team:   c.Constructor.name,
-    points: parseFloat(c.points),
-    wins:   parseInt(c.wins),
+    points: toFloat(c.points),
+    wins:   toInt(c.wins),
   }));
 
   const dStandings = driverRes.MRData.StandingsTable.StandingsLists?.[0];
   const champion   = dStandings?.DriverStandings?.[0];
   const drivers    = (dStandings?.DriverStandings || []).map(d => ({
-    pos:    parseInt(d.position),
+    pos:    toInt(d.position),
     name:   `${d.Driver.givenName} ${d.Driver.familyName}`,
     code:   d.Driver.code,
     nat:    d.Driver.nationality,
     team:   d.Constructors?.[0]?.name || '—',
-    points: parseFloat(d.points),
-    wins:   parseInt(d.wins),
+    points: toFloat(d.points),
+    wins:   toInt(d.wins),
   }));
 
   const qualifying = rawQual.map(r => ({
-    round: parseInt(r.round),
+    round: toInt(r.round),
     name:  r.raceName.replace(' Grand Prix', ' GP'),
     date:  r.date,
     results: (r.QualifyingResults || [])
-      .sort((a, b) => parseInt(a.position) - parseInt(b.position))
+      .sort((a, b) => toInt(a.position) - toInt(b.position))
       .map(q => ({
-        pos:  parseInt(q.position),
+        pos:  toInt(q.position),
         name: `${q.Driver.givenName} ${q.Driver.familyName}`,
         code: q.Driver.code,
         team: q.Constructor.name,
@@ -429,8 +553,8 @@ async function loadSeasonFromAPI(year, signal) {
     champCode,
     champTeam:   champTeam?.name || '—',
     champNat:    champDriver?.nationality || '—',
-    champWins:   parseInt(champion?.wins || 0),
-    champPoints: parseFloat(champion?.points || 0),
+    champWins:   toInt(champion?.wins),
+    champPoints: toFloat(champion?.points),
     poles,
     podiums,
     fastestLaps,
@@ -439,6 +563,8 @@ async function loadSeasonFromAPI(year, signal) {
     constructors,
     drivers,
     qualifying,
+    roundStandings,
+    source: 'jolpica',
   };
 }
 
@@ -452,13 +578,19 @@ async function loadSeason(year, signal) {
     return seasonCache[year];
   }
 
-  let seasonData = isLiveSeason
-    ? await loadSeasonFromAPI(year, signal)
-    : await loadSeasonFromDB(year);
-
-  if (!isLiveSeason && (!seasonData.races || seasonData.races.length === 0)) {
-    console.warn(`No Supabase data for ${year}, falling back to Jolpica`);
+  let seasonData;
+  if (isLiveSeason) {
     seasonData = await loadSeasonFromAPI(year, signal);
+  } else {
+    try {
+      seasonData = await loadSeasonFromDB(year);
+      if (!hasRenderableSeasonData(seasonData)) {
+        throw new Error(`Incomplete Supabase data for ${year}`);
+      }
+    } catch (err) {
+      console.warn(`Supabase unavailable or incomplete for ${year}, falling back to Jolpica`, err);
+      seasonData = await loadSeasonFromAPI(year, signal);
+    }
   }
 
   seasonCache[year]     = seasonData;
@@ -482,15 +614,39 @@ function buildWinShare(races) {
 function buildPointsProgression(data, topN = 5) {
   const topDrivers  = data.drivers.slice(0, topN);
   const sortedRaces = [...data.races].sort((a, b) => a.round - b.round);
+  const standingMap = new Map((data.roundStandings || []).map(round => [round.round, round.results]));
+  const hasOfficialStandings = sortedRaces.length > 0 && standingMap.size === sortedRaces.length;
+  const canUseRacePoints = sortedRaces.length > 0 && topDrivers.length > 0 && sortedRaces.every(race =>
+    topDrivers.every(driver => {
+      const result = race.allResults.find(r => r.code === driver.code || r.name === driver.name);
+      return !result || Number.isFinite(result.points);
+    })
+  );
+  const progressionMode = hasOfficialStandings
+    ? 'official'
+    : canUseRacePoints
+      ? 'race-points'
+      : 'estimated';
 
   const series = topDrivers.map(driver => {
     let cumulative = 0;
     const points = [0];
     sortedRaces.forEach(race => {
-      const result = race.allResults.find(r =>
-        r.code === driver.code || r.name === driver.name
-      );
-      cumulative += result ? getPoints(result.pos, data.year) : 0;
+      if (hasOfficialStandings) {
+        const standing = standingMap.get(race.round)?.find(r =>
+          r.code === driver.code || r.name === driver.name
+        );
+        cumulative = standing ? standing.points : cumulative;
+        points.push(cumulative);
+        return;
+      }
+
+      const result = race.allResults.find(r => r.code === driver.code || r.name === driver.name);
+      if (result) {
+        cumulative += progressionMode === 'race-points'
+          ? toFloat(result.points)
+          : getPoints(result.pos, data.year);
+      }
       points.push(cumulative);
     });
     return {
@@ -503,7 +659,7 @@ function buildPointsProgression(data, topN = 5) {
   });
 
   const labels = ['', ...sortedRaces.map(r => `R${r.round}`)];
-  return { series, labels };
+  return { series, labels, mode: progressionMode };
 }
 
 /* ─── Chart helpers ──────────────────────────────────────────────── */
@@ -537,11 +693,11 @@ function destroyCharts() {
 }
 
 /* ─── Chart builders ─────────────────────────────────────────────── */
-function buildProgressionChart(canvasId, data) {
+function buildProgressionChart(canvasId, data, progression) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
-  const { series, labels } = buildPointsProgression(data, 5);
+  const { series, labels } = progression;
   const grid  = chartGridColor();
   const ticks = chartTickColor();
 
@@ -881,15 +1037,44 @@ function renderCharts(data) {
 
   const gen     = ++renderGeneration;
   const surname = data.champion.split(' ').pop();
+  const progression = buildPointsProgression(data, 5);
+  const sourceLabel = data.source === 'supabase' ? 'ARCHIVE DATA' : 'LIVE DATA';
+  const progressionTitle = progression.mode === 'official'
+    ? 'Cumulative championship points'
+    : progression.mode === 'race-points'
+      ? 'Cumulative race-day points'
+      : 'Estimated cumulative points';
+  const progressionNote = progression.mode === 'official'
+    ? 'OFFICIAL STANDINGS'
+    : progression.mode === 'race-points'
+      ? 'RACE POINTS ONLY'
+      : 'ESTIMATED SCORING';
+
+  if (!data.races.length) {
+    el.innerHTML = `
+      <p class="eyebrow" style="margin-bottom:8px">Season Analytics</p>
+      <h2 class="charts-heading">${data.year} <em>by the numbers</em></h2>
+      <p class="charts-sub">NO RACE RESULTS YET · ${sourceLabel}</p>
+      <div class="chart-card-full">
+        <p class="chart-eyebrow">Season Preview</p>
+        <p class="chart-title">${data.year} waiting for lights out</p>
+        <div class="chart-empty">
+          Charts will populate once the opening round has race results and championship data.
+        </div>
+      </div>
+    `;
+    destroyCharts();
+    return;
+  }
 
   el.innerHTML = `
     <p class="eyebrow" style="margin-bottom:8px">Season Analytics</p>
     <h2 class="charts-heading">${data.year} <em>by the numbers</em></h2>
-    <p class="charts-sub">TOP 5 DRIVERS · ALL ${data.totalRaces} ROUNDS · LIVE DATA</p>
+    <p class="charts-sub">TOP 5 DRIVERS · ALL ${data.totalRaces} ROUNDS · ${sourceLabel}</p>
     <div class="charts-grid">
       <div class="chart-card-full">
         <p class="chart-eyebrow">Championship Battle</p>
-        <p class="chart-title">Cumulative points — <em>top 5 drivers</em></p>
+        <p class="chart-title">${progressionTitle} — <em>top 5 drivers · ${progressionNote}</em></p>
         <div class="chart-wrap-tall"><canvas id="ch-prog"></canvas></div>
       </div>
       <div class="chart-card">
@@ -923,7 +1108,7 @@ function renderCharts(data) {
   destroyCharts();
   requestAnimationFrame(() => {
     if (gen !== renderGeneration) return;
-    buildProgressionChart       ('ch-prog',     data);
+    buildProgressionChart       ('ch-prog',     data, progression);
     buildWinsBarChart           ('ch-wins',     data);
     buildConstructorDonut       ('ch-donut',    data);
     buildGridScatterChart       ('ch-scatter',  data);
@@ -1001,6 +1186,16 @@ function showError(err) {
 
 /* ─── Tab content builders ───────────────────────────────────────── */
 function renderRacesTab(data) {
+  if (!data.races.length) {
+    return `
+      <div class="row-header">
+        <p class="eyebrow" style="margin-bottom:0">Race Results</p>
+        <span class="row-count">0 rounds</span>
+      </div>
+      <p style="color:var(--text-4);font-size:13px;padding:24px 0">No race results yet for ${data.year}.</p>
+    `;
+  }
+
   return `
     <div class="row-header">
       <p class="eyebrow" style="margin-bottom:0">Race Results</p>
@@ -1060,6 +1255,16 @@ function renderQualifyingTab(data) {
 }
 
 function renderDriversTab(data) {
+  if (!data.drivers.length) {
+    return `
+      <div class="row-header">
+        <p class="eyebrow" style="margin-bottom:0">Driver Championship</p>
+        <span class="row-count">no standings yet</span>
+      </div>
+      <p style="color:var(--text-4);font-size:13px;padding:24px 0">Driver standings will appear after the first classified race weekend.</p>
+    `;
+  }
+
   return `
     <div class="row-header">
       <p class="eyebrow" style="margin-bottom:0">Driver Championship</p>
@@ -1191,27 +1396,8 @@ function renderSeasonRecords(data) {
   });
   const topDnf = Object.entries(dnfMap).sort((a, b) => b[1] - a[1])[0];
 
-  const poleMap = {};
-  races.forEach(race => {
-    race.allResults.forEach(res => {
-      if (res.grid === 1) {
-        const key = res.code || res.name.split(' ').pop();
-        poleMap[key] = (poleMap[key] || 0) + 1;
-      }
-    });
-  });
-  const topPole = Object.entries(poleMap).sort((a, b) => b[1] - a[1])[0];
-
-  let poleWins = 0, totalPoles = 0;
-  races.forEach(race => {
-    const winner  = race.allResults.find(r => r.pos === 1);
-    const poleman = race.allResults.find(r => r.grid === 1);
-    if (poleman) {
-      totalPoles++;
-      if (winner && winner.code === poleman.code) poleWins++;
-    }
-  });
-  const poleWinRate = totalPoles ? Math.round((poleWins / totalPoles) * 100) : 0;
+  const { topPole, poleWins, totalPoles } = buildPoleSummary(data);
+  const poleWinRate = percentOf(poleWins, totalPoles);
 
   return `
     <hr class="right-divider">
@@ -1238,8 +1424,8 @@ function renderSeasonStats(data) {
     ${[
       ['Total rounds', data.totalRaces],
       ['Fastest laps', data.fastestLaps],
-      ['Win rate',     Math.round((data.champWins / data.totalRaces) * 100) + '%'],
-      ['Podium rate',  Math.round((data.podiums   / data.totalRaces) * 100) + '%'],
+      ['Win rate',     formatRate(data.champWins, data.totalRaces)],
+      ['Podium rate',  formatRate(data.podiums, data.totalRaces)],
     ].map(([label, val]) => `
       <div class="stat-row">
         <span class="stat-label">${label}</span>
@@ -1534,6 +1720,33 @@ function renderChampVsRunnerUp(data) {
 /* ─── Hero section ───────────────────────────────────────────────── */
 function renderHero(data) {
   const champColor = teamColor(data.champTeam);
+  const isPreSeason = data.totalRaces === 0;
+  const heroLabel = isPreSeason
+    ? 'Season Preview'
+    : data.year === THIS_YEAR
+      ? 'Championship Leader'
+      : 'World Champion';
+  const heroNote = isPreSeason
+    ? '<p class="hero-preview-note">No race results yet. Championship visuals will populate after the opening round.</p>'
+    : '';
+  const heroMeta = isPreSeason
+    ? `
+      <div class="hero-meta">
+        <span class="hero-team-pill">
+          <span class="hero-team-dot" style="background:var(--text-4)"></span>
+          Awaiting first classified result
+        </span>
+      </div>
+    `
+    : `
+      <div class="hero-meta">
+        <span class="hero-team-pill">
+          <span class="hero-team-dot" style="background:${champColor}"></span>
+          ${data.champTeam}
+        </span>
+        <span class="hero-nat">${data.champNat}</span>
+      </div>
+    `;
   return `
     <div class="hero">
       <div class="hero-year-ghost">${data.year}</div>
@@ -1543,18 +1756,13 @@ function renderHero(data) {
         alt="${data.year} F1 Car"
         onerror="this.style.display='none'"
       />
-      <p class="eyebrow">${data.year === THIS_YEAR ? 'Championship Leader' : 'World Champion'} — ${data.year}</p>
+      <p class="eyebrow">${heroLabel} — ${data.year}</p>
       <div class="hero-name-row">
         <span id="hero-name" class="hero-name"></span>
         <span id="hero-cursor" class="cursor-blink"></span>
       </div>
-      <div class="hero-meta">
-        <span class="hero-team-pill">
-          <span class="hero-team-dot" style="background:${champColor}"></span>
-          ${data.champTeam}
-        </span>
-        <span class="hero-nat">${data.champNat}</span>
-      </div>
+      ${heroNote}
+      ${heroMeta}
       <div style="margin-top:16px">
         <button
           onclick="
@@ -1584,11 +1792,13 @@ function renderHero(data) {
 }
 /* ─── Metrics grid ───────────────────────────────────────────────── */
 function renderMetricsGrid(data) {
+  const totalRounds = Math.max(data.totalRaces, 1);
+  const pointsMax = Math.max(data.champPoints, 1);
   const metrics = [
-    { label: 'Race Wins', id: 'mv-wins',  val: data.champWins,   max: data.totalRaces,  delay: 0   },
-    { label: 'Pole Pos.', id: 'mv-poles', val: data.poles,       max: data.totalRaces,  delay: 80  },
-    { label: 'Podiums',   id: 'mv-pods',  val: data.podiums,     max: data.totalRaces,  delay: 160 },
-    { label: 'Points',    id: 'mv-pts',   val: data.champPoints, max: data.champPoints, delay: 240 },
+    { label: 'Race Wins', id: 'mv-wins',  val: data.champWins,   max: totalRounds, delay: 0   },
+    { label: 'Pole Pos.', id: 'mv-poles', val: data.poles,       max: totalRounds, delay: 80  },
+    { label: 'Podiums',   id: 'mv-pods',  val: data.podiums,     max: totalRounds, delay: 160 },
+    { label: 'Points',    id: 'mv-pts',   val: data.champPoints, max: pointsMax,   delay: 240 },
   ];
   return { html: `
     <div class="metrics-grid">
@@ -1598,7 +1808,7 @@ function renderMetricsGrid(data) {
           <div id="${m.id}" class="metric-value">0</div>
           <div class="metric-track">
             <div class="metric-fill bar-anim"
-                 style="width:${Math.round((m.val / m.max) * 100)}%;
+                 style="width:${percentOf(m.val, m.max)}%;
                         animation-delay:${m.delay + 460}ms">
             </div>
           </div>
@@ -1651,9 +1861,12 @@ function renderSeason(data) {
   requestAnimationFrame(() => {
     const nameEl   = document.getElementById('hero-name');
     const cursorEl = document.getElementById('hero-cursor');
-    if (nameEl && cursorEl) typewriteChampion(nameEl, cursorEl, data.champion);
+    const heroName = data.totalRaces === 0 ? 'Opening Round Ahead' : data.champion;
+    if (nameEl && cursorEl) {
+      typewriteChampion(nameEl, cursorEl, heroName);
+    }
 
-    const carDelay = 80 + (data.champion.length * 42) + 300;
+    const carDelay = 80 + (heroName.length * 42) + 300;
     setTimeout(() => {
       const carEl = document.querySelector('.hero-car');
       if (carEl) {
@@ -1763,10 +1976,39 @@ async function fetchAndRender(year) {
 }
 
 /* ─── Season bar ─────────────────────────────────────────────────── */
+function syncSeasonBarPosition(smooth = true) {
+  const bar = document.getElementById('season-bar');
+  const activeBtn = bar?.querySelector('.season-btn.active');
+  if (!bar || !activeBtn) return;
+
+  if (seasonBarScrollFrame !== null) cancelAnimationFrame(seasonBarScrollFrame);
+
+  seasonBarScrollFrame = requestAnimationFrame(() => {
+    seasonBarScrollFrame = null;
+
+    const maxScroll = Math.max(bar.scrollWidth - bar.clientWidth, 0);
+    if (maxScroll <= 0) {
+      bar.scrollLeft = 0;
+      return;
+    }
+
+    const targetLeft = activeBtn.offsetLeft - ((bar.clientWidth - activeBtn.offsetWidth) / 2);
+    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScroll);
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    bar.scrollTo({
+      left: clampedLeft,
+      behavior: smooth && !prefersReducedMotion ? 'smooth' : 'auto',
+    });
+  });
+}
+
 /* ── CHANGE A: Replace buildSeasonBar() ─────────────────────────── */
 function buildSeasonBar() {
   const bar      = document.getElementById('season-bar');
+  if (!bar) return;
   const existing = bar.querySelectorAll('.season-btn');
+  const shouldAnimateScroll = existing.length === SEASONS.length;
  
   if (existing.length === SEASONS.length) {
     // Buttons already exist — just update active/disabled state
@@ -1792,6 +2034,8 @@ function buildSeasonBar() {
       btn.addEventListener('click', () => selectSeason(parseInt(btn.dataset.year)));
     });
   }
+
+  syncSeasonBarPosition(shouldAnimateScroll);
 }
 
 /* ─── Theme ──────────────────────────────────────────────────────── */
@@ -1828,5 +2072,6 @@ const isStaticPage = !document.getElementById('season-bar');
 
 if (!isStaticPage) {
   buildSeasonBar();
+  window.addEventListener('resize', () => syncSeasonBarPosition(false));
   fetchAndRender(currentSeason);
 }

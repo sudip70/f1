@@ -206,9 +206,11 @@ html.dark .nav {
 .season-bar {
   display: flex;
   gap: 2px;
-  padding: 10px 0;
+  padding: 10px 4px;
   overflow-x: auto;
   scrollbar-width: none;
+  scroll-padding-inline: 120px;
+  scroll-snap-type: x proximity;
 }
 .season-bar::-webkit-scrollbar { display: none; }
 
@@ -225,6 +227,7 @@ html.dark .nav {
   cursor: pointer;
   letter-spacing: 0.5px;
   white-space: nowrap;
+  scroll-snap-align: center;
   transition: color 0.2s, background 0.25s, border-color 0.25s;
 }
 .season-btn:hover    { color: var(--text-2); background: var(--bg-subtle); }
@@ -355,6 +358,13 @@ html.dark .theme-icon-dark  { display: none; }
   gap: 16px;
   margin-top: 20px;
   flex-wrap: wrap;
+}
+.hero-preview-note {
+  max-width: 42rem;
+  margin-top: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-3);
 }
 .hero-team-pill {
   display: inline-flex;
@@ -757,6 +767,13 @@ html.dark .theme-icon-dark  { display: none; }
   margin-bottom: 20px;
 }
 .chart-title em { font-style: italic; font-weight: 400; }
+.chart-empty {
+  padding: 28px 0 6px;
+  max-width: 40rem;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
 
 .chart-wrap      { position: relative; height: 280px; }
 .chart-wrap-tall { position: relative; height: 340px; }

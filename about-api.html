@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260411-4">
   <!-- Dark mode init — must be inline and before body to prevent flash -->
   <script>
     (function() {
@@ -214,6 +214,67 @@
 
     <hr class="about-divider">
 
+    <!-- Chatbot -->
+    <section class="about-section">
+      <div class="about-section-label">
+        <p class="eyebrow">Chatbot</p>
+      </div>
+      <div class="about-section-content">
+        <h2 class="about-heading">How the <em>chatbot</em> works</h2>
+        <p class="about-body">The chat assistant is not trained on a separate copy of the data. It uses a grounded retrieval flow: the browser sends the question to a Supabase Edge Function, the edge function decides which validated F1 lookup tools to run, and the final answer is generated only from those tool results.</p>
+        <p class="about-body">Historical questions are answered from Supabase archive tables. Current-season questions are answered from the live Jolpica API. Follow-up context is stored only for the current browser session so questions like “how many wins did he have that season?” can resolve correctly without turning the chatbot into a free-form memory system.</p>
+
+        <div class="api-meta-row">
+          <div class="api-meta"><span class="api-meta-label">Entry point</span><code class="api-meta-val">/functions/v1/chat</code></div>
+          <div class="api-meta"><span class="api-meta-label">Backend</span><code class="api-meta-val">Supabase Edge Function</code></div>
+          <div class="api-meta"><span class="api-meta-label">Archive source</span><code class="api-meta-val">Supabase tables</code></div>
+          <div class="api-meta"><span class="api-meta-label">Live source</span><code class="api-meta-val">Jolpica F1 API</code></div>
+          <div class="api-meta"><span class="api-meta-label">Model</span><code class="api-meta-val">Groq · GPT-OSS 20B</code></div>
+          <div class="api-meta"><span class="api-meta-label">Memory</span><code class="api-meta-val">sessionStorage only</code></div>
+        </div>
+
+        <h3 class="about-subheading">Chat architecture</h3>
+
+        <div class="endpoint-list">
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(201,33,30,0.12);color:#c9211e">UI</div>
+            <div>
+              <code class="endpoint-path">Floating chat launcher</code>
+              <p class="endpoint-desc">The launcher appears across the site and opens a session-based chat panel. Chat history and resolved follow-up entities are stored in <code>sessionStorage</code>, not in a database.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method">POST</div>
+            <div>
+              <code class="endpoint-path">/functions/v1/chat</code>
+              <p class="endpoint-desc">Public read-only edge endpoint that validates the request, applies rate limiting and domain guardrails, routes the question to archive or live data sources, and returns a grounded answer with light evidence.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(54,113,198,0.12);color:#3671C6">TOOLS</div>
+            <div>
+              <code class="endpoint-path">Structured F1 lookups</code>
+              <p class="endpoint-desc">The model can call validated tools for race winners, qualifying, standings, driver season summaries, and constructor season summaries. It does not generate raw SQL and it does not query arbitrary tables.</p>
+            </div>
+          </div>
+          <div class="endpoint">
+            <div class="endpoint-method" style="background:rgba(53,140,117,0.12);color:#358C75">MODEL</div>
+            <div>
+              <code class="endpoint-path">Groq free-tier inference</code>
+              <p class="endpoint-desc">A lightweight tool-calling model on Groq turns the tool results into a short plain-text answer. The model is used for orchestration and phrasing, not as a hidden source of F1 facts.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <p class="callout-title">Guardrails</p>
+          <p class="callout-body">The chatbot is intentionally narrow. It is limited to Formula 1 questions grounded in the dashboard data, plus a small set of custom site/developer answers. Non-F1 prompts are rejected, current-season championship winner questions are reframed as “the season is still ongoing and currently led by…”, and unsupported stats are refused instead of guessed.</p>
+        </div>
+      </div>
+    </section>
+
+    <hr class="about-divider">
+
     <!-- Planned features -->
     <section class="about-section">
       <div class="about-section-label">
@@ -323,6 +384,8 @@
     </div>
   </footer>
 
-  <script type="module" src="app.js" data-page="static"></script>
+  <div id="chat-root"></div>
+
+  <script type="module" src="app.js?v=20260411-12" data-page="static"></script>
 </body>
 </html>

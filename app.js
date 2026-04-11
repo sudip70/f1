@@ -53,6 +53,7 @@
 'use strict';
 
 /* ─── Supabase client ────────────────────────────────────────────── */
+import { initChatWidget } from './chat.js?v=20260411-12';
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
 const SUPABASE_URL = 'https://iavnlezplthsznnetjcv.supabase.co';
@@ -666,22 +667,26 @@ function buildPointsProgression(data, topN = 5) {
 function isDark() {
   return document.documentElement.classList.contains('dark');
 }
-function chartGridColor()  { return isDark() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'; }
-function chartTickColor()  { return isDark() ? '#444' : '#ccc'; }
+function themeToken(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+function chartGridColor()  { return themeToken('--chart-grid', isDark() ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.075)'); }
+function chartTickColor()  { return themeToken('--chart-tick', isDark() ? '#444' : '#8d867d'); }
 function tooltipOptions()  {
   return {
     backgroundColor: isDark() ? '#1c1c1c' : '#ffffff',
     borderColor:     isDark() ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
     borderWidth:     1,
-    titleColor:      isDark() ? '#666' : '#999',
-    bodyColor:       isDark() ? '#aaa' : '#555',
+    titleColor:      isDark() ? '#666' : themeToken('--text-3', '#706a63'),
+    bodyColor:       isDark() ? '#aaa' : themeToken('--text-2', '#4f4a44'),
     padding:         10,
   };
 }
 
 function setChartDefaults() {
   if (typeof Chart === 'undefined') return;
-  Chart.defaults.color       = isDark() ? '#555' : '#aaa';
+  Chart.defaults.color       = chartTickColor();
   Chart.defaults.borderColor = chartGridColor();
   Chart.defaults.font.family = "'JetBrains Mono', monospace";
   Chart.defaults.font.size   = 10;
@@ -772,7 +777,7 @@ function buildWinsBarChart(canvasId, data) {
       },
       scales: {
         x: { grid: { color: grid }, ticks: { color: ticks, precision: 0 } },
-        y: { grid: { display: false }, ticks: { color: isDark() ? '#888' : '#888', font: { size: 11 } } },
+        y: { grid: { display: false }, ticks: { color: ticks, font: { size: 11 } } },
       },
     },
   });
@@ -2069,6 +2074,12 @@ const _themeToggle = document.getElementById('theme-toggle');
 if (_themeToggle) _themeToggle.addEventListener('click', toggleTheme);
 
 const isStaticPage = !document.getElementById('season-bar');
+
+initChatWidget({
+  supabaseUrl: SUPABASE_URL,
+  supabaseKey: SUPABASE_KEY,
+  getSelectedSeason: () => currentSeason || THIS_YEAR,
+});
 
 if (!isStaticPage) {
   buildSeasonBar();

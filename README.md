@@ -25,6 +25,7 @@ A browser-based Formula 1 analytics dashboard covering every season from 2000 to
 - **Dark mode** - system preference detection + localStorage persistence
 - **Animated tab indicator** - sliding underline between Races / Qualifying / Drivers
 - **Team-coloured race rows** - left border accent on hover using the winner's team colour
+- **F1 chat assistant** - floating modal with session-aware follow-ups grounded in Supabase archive data and the live Jolpica season
 
 ---
 
@@ -58,6 +59,31 @@ npx serve .
 **Option 3 - VS Code:**
 Install the **Live Server** extension → right-click `index.html` → Open with Live Server.
 
+### Chatbot setup
+
+The chat feature needs a deployed Supabase Edge Function and a Groq API key.
+
+You do not need a global Supabase CLI install on this machine. Use `npx supabase ...`.
+
+1. Apply the included database migration for the shared chat rate limiter with your normal Supabase migration flow.
+
+2. Set Supabase secrets:
+
+```bash
+npx supabase secrets set GROQ_API_KEY=your_key_here
+npx supabase secrets set GROQ_MODEL=openai/gpt-oss-20b
+npx supabase secrets set CHAT_RATE_LIMIT_PER_MINUTE=5
+```
+
+
+3. Deploy the edge function:
+
+```bash
+npx supabase functions deploy chat
+```
+
+4. `supabase/config.toml` disables JWT verification for this public, read-only chat endpoint, so the browser can call it with the existing anon key.
+
 ---
 
 ## Project Structure
@@ -68,8 +94,15 @@ f1/
 ├── about.html          #About the project & author
 ├── about-api.html      #Data sources & architecture docs
 ├── app.js              #All JS - data fetching, rendering, charts
+├── chat.js             #Floating chat modal + session state + edge function calls
 ├── style.css           #All styles - tokens, components, animations
 ├── package.json        #Module type declaration + supabase dep
+├── supabase/
+│   ├── config.toml     #Edge function config
+│   ├── migrations/     #SQL migrations, including chat rate limiting
+│   └── functions/
+│       └── chat/
+│           └── index.ts #Chat backend with Groq tool calling and plain-text output cleanup
 └── image/
     ├── YYYY.svg        #Hero car SVG per season year
     └── tracks/
@@ -97,6 +130,23 @@ Season select
 ```
 
 Both paths normalise into the same `seasonData` shape so all rendering code is shared regardless of source.
+
+### Chatbot architecture
+
+```text
+Floating chat modal
+    │
+    └── Supabase Edge Function: /functions/v1/chat
+            │
+            ├── Supabase archive tools (2000 → last completed season)
+            ├── Jolpica live tools (current season only)
+            └── Groq Chat Completions API
+                    └── local tool calling + plain-text answer normalization
+```
+
+The browser stores chat history and resolved follow-up context in `sessionStorage`. The edge function keeps the model grounded by exposing validated F1 data tools instead of raw SQL generation, then normalises the final reply back to plain text for the widget.
+
+The default model is Groq's free-tier `openai/gpt-oss-20b`, and the edge function rate limit is tuned conservatively to stay within Groq request limits for a public site.
 
 ---
 

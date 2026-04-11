@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260411-4">
   <!-- Dark mode init — must be inline and before body to prevent flash -->
   <script>
     (function() {
@@ -170,14 +170,17 @@
       </div>
       <div class="about-section-content">
         <h2 class="about-heading">Built <em>with</em></h2>
-        <p class="about-body">Vanilla HTML, CSS, and JavaScript - no build step, no framework, no bundler. Chart.js handles all six charts. Past seasons are stored in a Supabase PostgreSQL database seeded from the Jolpica API. The current season fetches live with parallel requests and automatic rate-limit retry. Fonts from Google Fonts.</p>
+        <p class="about-body">The frontend is built with vanilla HTML, CSS, and JavaScript - no framework, no bundler, no build step. Chart.js handles the analytics layer, Supabase stores the historical archive and serves a public Edge Function for the chatbot, Jolpica powers the live season, and Groq runs the grounded F1 chat assistant on top of structured data tools. The whole project is deployed as a lightweight static site on GitHub Pages.</p>
         <div class="tag-row">
           <span class="tag">HTML</span>
           <span class="tag">CSS</span>
           <span class="tag">JavaScript</span>
           <span class="tag">Chart.js</span>
           <span class="tag">Supabase</span>
+          <span class="tag">Edge Functions</span>
           <span class="tag">Jolpica F1 API</span>
+          <span class="tag">Groq</span>
+          <span class="tag">GPT-OSS 20B</span>
           <span class="tag">GitHub Pages</span>
           <span class="tag">Lora</span>
           <span class="tag">JetBrains Mono</span>
@@ -194,6 +197,8 @@
     </div>
   </footer>
 
-  <script type="module" src="app.js" data-page="static"></script>
+  <div id="chat-root"></div>
+
+  <script type="module" src="app.js?v=20260411-12" data-page="static"></script>
 </body>
 </html>

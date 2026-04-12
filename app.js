@@ -53,7 +53,7 @@
 'use strict';
 
 /* ─── Supabase client ────────────────────────────────────────────── */
-import { initChatWidget } from './chat.js?v=20260411-13';
+import { initChatWidget } from './chat.js?v=20260412-15';
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
 const SUPABASE_URL = 'https://iavnlezplthsznnetjcv.supabase.co';

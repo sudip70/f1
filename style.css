@@ -779,9 +779,85 @@ html.dark .theme-icon-dark  { display: none; }
 .chart-wrap-tall { position: relative; height: 340px; }
 
 /* ─── Footer ─────────────────────────────────────────────────────── */
-.site-footer { border-top: 1px solid var(--border); padding: 24px 0 32px; }
-.site-footer .container { display: flex; justify-content: space-between; align-items: center; }
-.site-footer span { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); letter-spacing: 1px; }
+.site-footer {
+  border-top: 1px solid var(--border);
+  padding: 18px 0 22px;
+}
+
+.site-footer .container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+
+.site-footer-copy {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+}
+
+.site-footer-social {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.site-footer-link {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-card) 90%, transparent);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: transform 0.16s ease, border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.site-footer-link:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-2);
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-card) 96%, transparent);
+}
+
+.site-footer-link svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+@media (max-width: 720px) {
+  .site-footer {
+    padding: 16px 0 20px;
+  }
+
+  .site-footer .container {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .site-footer-copy {
+    font-size: 11px;
+  }
+
+  .site-footer-social {
+    justify-content: flex-start;
+  }
+
+  .site-footer-link {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+  }
+}
 
 /* ─── Chat widget ────────────────────────────────────────────────── */
 .chat-widget {

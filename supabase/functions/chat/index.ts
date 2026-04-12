@@ -1142,11 +1142,10 @@ function validateRequest(body: unknown) {
 
 function isF1DomainQuestion(messages: ChatMessage[], context: ResolvedContext) {
   const lastMessage = messages[messages.length - 1];
-  const combined = normalizeText(messages.map(message => message.content).join(' '));
   const latestQuestion = normalizeText(lastMessage?.content || '');
-  if (YEAR_PATTERN.test(combined)) return true;
+  if (YEAR_PATTERN.test(latestQuestion)) return true;
 
-  if (containsF1DomainTerms(combined)) return true;
+  if (containsF1DomainTerms(latestQuestion)) return true;
 
   return hasResolvedContext(context) && isContextualF1FollowUp(latestQuestion, context);
 }
@@ -1216,14 +1215,21 @@ function isCurrentSeasonWinnerQuestion(
 
   if (referencesPastYear) return false;
 
-  return selectedSeason === CURRENT_YEAR
-    || context.year === CURRENT_YEAR
-    || normalized.includes(String(CURRENT_YEAR))
+  const referencesExplicitCurrentSeason =
+    normalized.includes(String(CURRENT_YEAR))
     || normalized.includes('this season')
     || normalized.includes('current season')
     || normalized.includes('this year')
-    || normalized.includes('ongoing season')
-    || normalized.includes('championship');
+    || normalized.includes('ongoing season');
+
+  if (referencesExplicitCurrentSeason) {
+    return normalized.includes('this season')
+      ? selectedSeason === CURRENT_YEAR || context.year === CURRENT_YEAR
+      : true;
+  }
+
+  return context.year === CURRENT_YEAR
+    && (normalized.includes('that season') || normalized.includes('that year'));
 }
 
 function hasResolvedContext(context: ResolvedContext) {

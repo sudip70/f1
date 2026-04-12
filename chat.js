@@ -1,8 +1,9 @@
 const MAX_CLIENT_MESSAGES = 12;
 const CURRENT_YEAR = new Date().getFullYear();
+const STORAGE_KEY = 'f1-chat-session-v1';
 const STARTER_PROMPTS = [
   'Who won in Canada in 2018?',
-  'How many wins did Lewis Hamilton have that season?',
+  'How many wins did Lewis Hamilton have in 2018?',
   `Who is leading the ${CURRENT_YEAR} drivers championship?`,
 ];
 
@@ -123,7 +124,7 @@ export function initChatWidget({ supabaseUrl, supabaseKey, getSelectedSeason }) 
             placeholder="Who won in Canada in 2018?"
           ></textarea>
           <div class="chat-compose-footer">
-            <p class="chat-compose-hint">Follow-ups stay in context until you reset or reload.</p>
+            <p class="chat-compose-hint">Follow-ups stay in context until you reset or close this tab.</p>
             <button class="chat-submit" id="chat-submit" type="submit">ASK</button>
           </div>
         </form>
@@ -145,14 +146,41 @@ export function initChatWidget({ supabaseUrl, supabaseKey, getSelectedSeason }) 
     return;
   }
 
-  clearPersistedState();
-  const state = defaultState();
+  const state = loadPersistedState() || defaultState();
   let focusRestoreSerial = 0;
   let requestSerial = 0;
   let resetAnimationTimer = 0;
 
   function persist() {
-    clearPersistedState();
+    try {
+      const messages = state.messages
+        .filter(message => !message.pending)
+        .map(serializePersistedMessage)
+        .filter(Boolean)
+        .slice(-MAX_CLIENT_MESSAGES);
+
+      const nextContext = normalizeResolvedContext(state.resolvedContext);
+      const isDefaultSession = messages.length === 1
+        && messages[0].seed
+        && !nextContext.year
+        && !nextContext.driverName
+        && !nextContext.raceName
+        && !nextContext.teamName
+        && !nextContext.round
+        && nextContext.source === 'unknown';
+
+      if (isDefaultSession) {
+        clearPersistedState();
+        return;
+      }
+
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+        messages,
+        resolvedContext: nextContext,
+      }));
+    } catch (_error) {
+      // Ignore storage errors in private browsing or restricted environments.
+    }
   }
 
   function setOpen(nextOpen) {
@@ -449,10 +477,96 @@ function buildApiMessages(messages) {
 
 function clearPersistedState() {
   try {
-    sessionStorage.removeItem('f1-chat-session-v1');
+    sessionStorage.removeItem(STORAGE_KEY);
   } catch (_error) {
     // Ignore storage errors in private browsing or restricted environments.
   }
+}
+
+function loadPersistedState() {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const messages = Array.isArray(parsed?.messages)
+      ? parsed.messages
+          .map(sanitizePersistedMessage)
+          .filter(Boolean)
+          .slice(-MAX_CLIENT_MESSAGES)
+      : [];
+
+    if (!messages.length) {
+      clearPersistedState();
+      return null;
+    }
+
+    return {
+      isOpen: false,
+      pending: false,
+      messages,
+      resolvedContext: normalizeResolvedContext(parsed?.resolvedContext),
+    };
+  } catch (_error) {
+    clearPersistedState();
+    return null;
+  }
+}
+
+function serializePersistedMessage(message) {
+  if (!message || typeof message !== 'object') return null;
+
+  return {
+    id: toShortString(message.id, 80) || crypto.randomUUID(),
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: toShortString(message.content, 2000),
+    sources: Array.isArray(message.sources)
+      ? message.sources
+          .map(source => ({
+            label: toShortString(source?.label, 80),
+            detail: toShortString(source?.detail, 160),
+          }))
+          .filter(source => source.label)
+          .slice(0, 3)
+      : [],
+    suggestions: Array.isArray(message.suggestions)
+      ? message.suggestions
+          .map(suggestion => toShortString(suggestion, 120))
+          .filter(Boolean)
+          .slice(0, 3)
+      : [],
+    seed: Boolean(message.seed),
+  };
+}
+
+function sanitizePersistedMessage(value) {
+  if (!value || typeof value !== 'object') return null;
+
+  const role = value.role === 'assistant' ? 'assistant' : value.role === 'user' ? 'user' : '';
+  const content = toShortString(value.content, 2000);
+  if (!role || !content) return null;
+
+  return {
+    id: toShortString(value.id, 80) || crypto.randomUUID(),
+    role,
+    content,
+    sources: Array.isArray(value.sources)
+      ? value.sources
+          .map(source => ({
+            label: toShortString(source?.label, 80),
+            detail: toShortString(source?.detail, 160),
+          }))
+          .filter(source => source.label)
+          .slice(0, 3)
+      : [],
+    suggestions: Array.isArray(value.suggestions)
+      ? value.suggestions
+          .map(suggestion => toShortString(suggestion, 120))
+          .filter(Boolean)
+          .slice(0, 3)
+      : [],
+    seed: Boolean(value.seed && role === 'assistant'),
+  };
 }
 
 function defaultState() {

@@ -1103,6 +1103,10 @@ html.dark .theme-icon-dark  { display: none; }
     padding: 12px 16px;
   }
 
+  .chat-input {
+    font-size: 16px;
+  }
+
   .chat-panel {
     top: auto;
     right: calc(20px + env(safe-area-inset-right));

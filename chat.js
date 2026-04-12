@@ -253,7 +253,14 @@ export function initChatWidget({ supabaseUrl, supabaseKey, getSelectedSeason }) 
     state.pending = false;
     persist();
     render();
-    input.focus();
+    if (shouldRefocusInputAfterReset()) {
+      requestAnimationFrame(() => input.focus({ preventScroll: true }));
+    }
+  }
+
+  function shouldRefocusInputAfterReset() {
+    if (typeof window.matchMedia !== 'function') return true;
+    return !window.matchMedia('(pointer: coarse)').matches;
   }
 
   function playResetAnimation() {

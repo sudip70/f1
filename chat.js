@@ -124,7 +124,7 @@ export function initChatWidget({ supabaseUrl, supabaseKey, getSelectedSeason }) 
           ></textarea>
           <div class="chat-compose-footer">
             <p class="chat-compose-hint">Follow-ups stay in context until you reset or reload.</p>
-            <button class="chat-submit" id="chat-submit" type="submit">Send</button>
+            <button class="chat-submit" id="chat-submit" type="submit">ASK</button>
           </div>
         </form>
       </section>

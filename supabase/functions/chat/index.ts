@@ -176,7 +176,7 @@ Deno.serve(async request => {
       });
     }
 
-    const ongoingSeasonReply = await maybeHandleCurrentSeasonWinnerQuestion(
+    const ongoingSeasonReply = await maybeHandleCurrentSeasonStandingsQuestion(
       input.messages,
       input.resolvedContext,
       input.selectedSeason,
@@ -1039,26 +1039,36 @@ function defaultResolvedContext(): ResolvedContext {
   };
 }
 
-async function maybeHandleCurrentSeasonWinnerQuestion(
+async function maybeHandleCurrentSeasonStandingsQuestion(
   messages: ChatMessage[],
   context: ResolvedContext,
   selectedSeason: number,
 ) {
   const lastMessage = messages[messages.length - 1];
-  if (!lastMessage || !isCurrentSeasonWinnerQuestion(lastMessage.content, context, selectedSeason)) {
+  if (!lastMessage) {
+    return null;
+  }
+
+  const normalizedQuestion = normalizeText(lastMessage.content);
+  const championship = normalizedQuestion.includes('constructor') || normalizedQuestion.includes('team')
+    ? 'constructors'
+    : 'drivers';
+
+  if (!isCurrentSeasonStandingsQuestion(normalizedQuestion, context, selectedSeason, championship)) {
     return null;
   }
 
   const standings = await lookupStandings({
     year: CURRENT_YEAR,
-    championship: 'drivers',
+    championship,
     limit: 1,
   });
 
   if (!standings?.ok || !Array.isArray(standings.leaders) || !standings.leaders.length) {
     const fallbackContext = buildContext({ year: CURRENT_YEAR, source: 'jolpica' });
+    const championshipLabel = championship === 'constructors' ? 'constructor' : 'driver';
     return {
-      answer: `The ${CURRENT_YEAR} season is still ongoing, so there is no winner yet. The live championship leader is unavailable right now.`,
+      answer: `The ${CURRENT_YEAR} season is still ongoing, and the live ${championshipLabel} championship leader is unavailable right now.`,
       sources: [],
       resolvedContext: fallbackContext,
       suggestions: buildSuggestions(fallbackContext),
@@ -1066,19 +1076,29 @@ async function maybeHandleCurrentSeasonWinnerQuestion(
   }
 
   const leader = standings.leaders[0] as Record<string, unknown>;
-  const leaderName = String(leader.name || 'the current driver standings leader');
+  const leaderName = championship === 'constructors'
+    ? String(leader.team || 'the current constructor standings leader')
+    : String(leader.name || 'the current driver standings leader');
   const teamName = String(leader.team || 'their team');
   const points = formatStatNumber(toFloat(leader.points));
   const wins = toInt(leader.wins);
   const nextContext = buildContext({
     year: CURRENT_YEAR,
-    driverName: leaderName,
-    teamName,
+    driverName: championship === 'drivers' ? leaderName : '',
+    teamName: championship === 'constructors' ? leaderName : teamName,
     source: 'jolpica',
   });
+  const asksWinner = isCurrentSeasonWinnerQuestion(normalizedQuestion);
+  const championshipLabel = championship === 'constructors' ? 'constructors' : 'drivers';
 
   return {
-    answer: `The ${CURRENT_YEAR} season is still ongoing and is currently led by ${leaderName} for ${teamName} with ${points} points and ${wins} win${wins === 1 ? '' : 's'}.`,
+    answer: asksWinner
+      ? championship === 'constructors'
+        ? `The ${CURRENT_YEAR} constructors championship is still ongoing and is currently led by ${leaderName} with ${points} points and ${wins} win${wins === 1 ? '' : 's'}.`
+        : `The ${CURRENT_YEAR} drivers championship is still ongoing and is currently led by ${leaderName} for ${teamName} with ${points} points and ${wins} win${wins === 1 ? '' : 's'}.`
+      : championship === 'constructors'
+        ? `The ${CURRENT_YEAR} constructors championship is currently led by ${leaderName} with ${points} points and ${wins} win${wins === 1 ? '' : 's'}.`
+        : `The ${CURRENT_YEAR} ${championshipLabel} championship is currently led by ${leaderName} for ${teamName} with ${points} points and ${wins} win${wins === 1 ? '' : 's'}.`,
     sources: dedupeSources(Array.isArray(standings.provenance) ? standings.provenance : []).slice(0, 3),
     resolvedContext: nextContext,
     suggestions: buildSuggestions(nextContext),
@@ -1183,18 +1203,25 @@ function containsF1DomainTerms(text: string) {
   ].some(term => text.includes(normalizeText(term)));
 }
 
-function isCurrentSeasonWinnerQuestion(
-  question: string,
+function isCurrentSeasonStandingsQuestion(
+  normalizedQuestion: string,
   context: ResolvedContext,
   selectedSeason: number,
+  championship: 'drivers' | 'constructors',
 ) {
-  const normalized = normalizeText(question);
-  const asksSeasonWinner = normalized.includes('who won')
-    || normalized.includes('winner')
-    || normalized.includes('who is champion')
-    || normalized.includes('who won the championship');
+  const asksSeasonWinner = isCurrentSeasonWinnerQuestion(normalizedQuestion);
+  const asksSeasonLeader =
+    normalizedQuestion.includes('who is leading')
+    || normalizedQuestion.includes('who leads')
+    || normalizedQuestion.includes('leader')
+    || normalizedQuestion.includes('lead the standings')
+    || normalizedQuestion.includes('top of the standings')
+    || normalizedQuestion.includes('leading the standings');
+  const asksStandings =
+    normalizedQuestion.includes('standings')
+    || normalizedQuestion.includes('championship');
 
-  if (!asksSeasonWinner) return false;
+  if (!asksSeasonWinner && !(asksSeasonLeader && asksStandings)) return false;
 
   const referencesRace = [
     'gp',
@@ -1205,31 +1232,46 @@ function isCurrentSeasonWinnerQuestion(
     'pole',
     'qualifying',
     'circuit',
-  ].some(term => normalized.includes(normalizeText(term)));
+  ].some(term => normalizedQuestion.includes(normalizeText(term)));
 
   if (referencesRace) return false;
 
-  const referencesPastYear = Array.from(normalized.matchAll(/\b20\d{2}\b/g))
+  const referencesPastYear = Array.from(normalizedQuestion.matchAll(/\b20\d{2}\b/g))
     .map(match => toInt(match[0]))
     .some(year => year >= MIN_YEAR && year < CURRENT_YEAR);
 
   if (referencesPastYear) return false;
 
   const referencesExplicitCurrentSeason =
-    normalized.includes(String(CURRENT_YEAR))
-    || normalized.includes('this season')
-    || normalized.includes('current season')
-    || normalized.includes('this year')
-    || normalized.includes('ongoing season');
+    normalizedQuestion.includes(String(CURRENT_YEAR))
+    || normalizedQuestion.includes('this season')
+    || normalizedQuestion.includes('current season')
+    || normalizedQuestion.includes('this year')
+    || normalizedQuestion.includes('ongoing season');
+
+  const mentionsExpectedTable = championship === 'constructors'
+    ? !normalizedQuestion.includes('driver')
+    : !normalizedQuestion.includes('constructor') && !normalizedQuestion.includes('team standings');
+
+  if (!mentionsExpectedTable) return false;
 
   if (referencesExplicitCurrentSeason) {
-    return normalized.includes('this season')
+    return normalizedQuestion.includes('this season')
       ? selectedSeason === CURRENT_YEAR || context.year === CURRENT_YEAR
       : true;
   }
 
+  if (selectedSeason === CURRENT_YEAR) return true;
+
   return context.year === CURRENT_YEAR
-    && (normalized.includes('that season') || normalized.includes('that year'));
+    && (normalizedQuestion.includes('that season') || normalizedQuestion.includes('that year'));
+}
+
+function isCurrentSeasonWinnerQuestion(normalizedQuestion: string) {
+  return normalizedQuestion.includes('who won')
+    || normalizedQuestion.includes('winner')
+    || normalizedQuestion.includes('who is champion')
+    || normalizedQuestion.includes('who won the championship');
 }
 
 function hasResolvedContext(context: ResolvedContext) {

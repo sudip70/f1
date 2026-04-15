@@ -6,7 +6,7 @@ A browser-based Formula 1 analytics dashboard covering every season from 2000 to
 
 **Demo:** 
 <p align="center">
-  <img src="f1_demo.gif" width="600"/>
+  <img src="f1_demo.gif" width="100%"/>
 </p>
 ---
 

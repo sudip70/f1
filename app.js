@@ -2073,6 +2073,54 @@ if (_footerYear) _footerYear.textContent = `© ${new Date().getFullYear()} Sudip
 const _themeToggle = document.getElementById('theme-toggle');
 if (_themeToggle) _themeToggle.addEventListener('click', toggleTheme);
 
+/* ─── Nav hamburger ──────────────────────────────────────────────── */
+const _navMenuBtn    = document.getElementById('nav-menu-btn');
+const _navMobileMenu = document.getElementById('nav-mobile-menu');
+if (_navMenuBtn && _navMobileMenu) {
+  function _closeNavMenu() {
+    _navMenuBtn.setAttribute('aria-expanded', 'false');
+    _navMobileMenu.classList.remove('is-open');
+  }
+
+  function _openNavMenu() {
+    const chatPanel    = document.getElementById('chat-panel');
+    const chatLauncher = document.getElementById('chat-launcher');
+    if (chatPanel && chatPanel.style.display !== 'none' && !chatPanel.hidden) {
+      chatPanel.style.display = 'none';
+      chatPanel.hidden = true;
+      if (chatLauncher) chatLauncher.setAttribute('aria-expanded', 'false');
+    }
+    _navMenuBtn.setAttribute('aria-expanded', 'true');
+    _navMobileMenu.classList.add('is-open');
+  }
+
+  _navMenuBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    _navMenuBtn.getAttribute('aria-expanded') === 'true' ? _closeNavMenu() : _openNavMenu();
+  });
+
+  document.addEventListener('click', e => {
+    if (!_navMenuBtn.contains(e.target) && !_navMobileMenu.contains(e.target)) {
+      _closeNavMenu();
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && _navMenuBtn.getAttribute('aria-expanded') === 'true') {
+      _closeNavMenu();
+      _navMenuBtn.focus();
+    }
+  });
+
+  // Capture phase required: chat.js calls stopPropagation on the launcher
+  // click, which kills bubble-phase listeners before they can fire.
+  document.addEventListener('click', e => {
+    if (e.target.closest('#chat-launcher') || e.target.closest('#chat-panel')) {
+      _closeNavMenu();
+    }
+  }, true);
+}
+
 const isStaticPage = !document.getElementById('season-bar');
 
 initChatWidget({

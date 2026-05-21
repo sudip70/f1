@@ -54,6 +54,13 @@ const archiveCache = new Map<number, { expiresAt: number; data: SeasonData }>();
 const liveCache = new Map<number, { expiresAt: number; data: SeasonData }>();
 const rateBuckets = new Map<string, number[]>();
 
+class GroqRateLimitError extends Error {
+  constructor() {
+    super('GroqRateLimitError');
+    this.name = 'GroqRateLimitError';
+  }
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -188,6 +195,16 @@ Deno.serve(async request => {
     const result = await runChat(input.messages, input.resolvedContext, input.selectedSeason);
     return jsonResponse(result);
   } catch (error) {
+    if (error instanceof GroqRateLimitError) {
+      return jsonResponse({
+        answer: 'The chat assistant is a little busy right now. Please try again in a moment.',
+        sources: [],
+        suggestions: [
+          'Who won in Canada in 2018?',
+          `Who is leading the ${CURRENT_YEAR} drivers championship?`,
+        ],
+      });
+    }
     console.error('chat error', error);
     return jsonResponse(
       {
@@ -831,8 +848,13 @@ async function fetchLiveConstructorStandings(year: number) {
   return jolpicaFetch(`${year}/constructorstandings/`);
 }
 
-async function jolpicaFetch(path: string) {
+async function jolpicaFetch(path: string, attempt = 0): Promise<Record<string, unknown>> {
   const response = await fetch(`${JOLPICA_BASE}/${path}`);
+  if (response.status === 429) {
+    if (attempt >= 3) throw new Error(`Jolpica rate limit exceeded for ${path}`);
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+    return jolpicaFetch(path, attempt + 1);
+  }
   if (!response.ok) {
     throw new Error(`Jolpica request failed for ${path}: ${response.status}`);
   }
@@ -850,6 +872,7 @@ async function createGroqChatCompletion(payload: Record<string, unknown>) {
   });
 
   const data = await response.json().catch(() => ({}));
+  if (response.status === 429) throw new GroqRateLimitError();
   if (!response.ok) {
     const message = data?.error?.message || 'Groq request failed.';
     throw new Error(message);
@@ -1307,25 +1330,17 @@ function isContextualF1FollowUp(question: string, context: ResolvedContext) {
 function isDeveloperQuestion(question: string) {
   const normalized = normalizeText(question);
 
-  return [
-    'who built this site',
-    'who built this dashboard',
-    'who built this app',
-    'who made this site',
-    'who made this dashboard',
-    'who created this site',
-    'who created this dashboard',
-    'who developed this site',
-    'who developed this dashboard',
-    'who is the developer',
-    'who built this',
-    'who made this',
-    'who created this',
-    'who is behind this site',
-    'who built f1 analytics',
-    'who made f1 analytics',
-    'who created f1 analytics',
-  ].some(pattern => normalized.includes(pattern));
+  // Attribution nouns are specific enough on their own
+  const attributionNouns = ['author', 'developer', 'creator', 'programmer', 'coder'];
+  if (attributionNouns.some(w => normalized.includes(w))) return true;
+
+  // Action verbs require a project target to avoid F1 false positives ("who made the fastest lap")
+  const actionVerbs = ['built', 'made', 'created', 'developed', 'coded', 'wrote'];
+  const projectTargets = ['this site', 'this dashboard', 'this app', 'this page', 'this tool', 'this project', 'this website', 'f1 analytics'];
+  return (
+    actionVerbs.some(v => normalized.includes(v)) &&
+    projectTargets.some(t => normalized.includes(t))
+  );
 }
 
 function findBestRace(races: Array<Record<string, unknown>>, query: string) {

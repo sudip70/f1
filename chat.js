@@ -347,7 +347,11 @@ export function initChatWidget({ supabaseUrl, supabaseKey, getSelectedSeason }) 
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Chat request failed');
+        const isRateLimit = response.status === 429 ||
+          String(payload.error || '').toLowerCase().includes('rate limit');
+        throw new Error(isRateLimit
+          ? 'The chat assistant is a little busy right now with requests. Please try again in a moment.'
+          : payload.error || 'Chat request failed');
       }
       if (requestId !== requestSerial) return;
 

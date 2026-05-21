@@ -53,7 +53,7 @@
 'use strict';
 
 /* ─── Supabase client ────────────────────────────────────────────── */
-import { initChatWidget } from './chat.js?v=20260412-15';
+import { initChatWidget } from './chat.js?v=20260520-1';
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
 const SUPABASE_URL = 'https://iavnlezplthsznnetjcv.supabase.co';
@@ -1770,11 +1770,8 @@ function renderHero(data) {
       ${heroMeta}
       <div style="margin-top:16px">
         <button
-          onclick="
-            const el = document.getElementById('race-data');
-            const y = el.getBoundingClientRect().top + window.scrollY - 104;
-            window.scrollTo({ top: y, behavior: 'smooth' });
-          "
+          id="hero-scroll-btn"
+          data-color="${champColor}"
           style="
             font-family: var(--font-mono);
             font-size: 11px;
@@ -1788,8 +1785,6 @@ function renderHero(data) {
             cursor: pointer;
             transition: color 0.15s, border-color 0.15s, background 0.15s;
           "
-          onmouseover="this.style.background='${champColor}30';this.style.borderColor='${champColor}'"
-          onmouseout="this.style.background='${champColor}18';this.style.borderColor='${champColor}55'"
         >↓ View Race Results</button>
       </div>
     </div>
@@ -1852,6 +1847,24 @@ function renderSeason(data) {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
+
+  const heroScrollBtn = document.getElementById('hero-scroll-btn');
+  if (heroScrollBtn) {
+    const c = heroScrollBtn.dataset.color;
+    heroScrollBtn.addEventListener('click', () => {
+      const el = document.getElementById('race-data');
+      const y = el.getBoundingClientRect().top + window.scrollY - 104;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+    });
+    heroScrollBtn.addEventListener('mouseover', () => {
+      heroScrollBtn.style.background = `${c}30`;
+      heroScrollBtn.style.borderColor = c;
+    });
+    heroScrollBtn.addEventListener('mouseout', () => {
+      heroScrollBtn.style.background = `${c}18`;
+      heroScrollBtn.style.borderColor = `${c}55`;
+    });
+  }
 
   wireRaceRowClicks(data);
   document.querySelectorAll('.race-row[data-round]').forEach(row => {
